@@ -156,6 +156,21 @@ VALUES ((SELECT id FROM `groups` WHERE `name` = 'admin'), @id_page_agentic_confi
 -- nav_position is intentionally NULL so it does NOT show up as a separate
 -- entry in the top admin "Modules" dropdown (we only want one entry per
 -- plugin there, just like sh-shp-llm does for moduleLlmAdminConsole).
+--
+-- IMPORTANT: at least one row must be linked into `pageType_fields` for
+-- this pageType BEFORE inserting the page row, otherwise the
+-- get_page_fields_helper() function returns NULL (it joins pageType_fields
+-- to fields and aggregates with GROUP_CONCAT). The get_page_fields
+-- procedure then short-circuits to `SELECT * FROM pages WHERE 1=2`,
+-- BasePage::fetch_page_info() receives an empty result, id_page falls
+-- back to 0, the ACL check is performed against page id 0 and fails — so
+-- the user sees a "Kein Zugriff" / no-access page even though the
+-- acl_groups row is correct. Linking `title` (the standard CMS page
+-- title field) is the minimum needed for the procedure to emit valid
+-- SQL; it also lets admins translate the page title via the CMS UI.
+INSERT IGNORE INTO `pageType_fields` (`id_pageType`, `id_fields`, `default_value`, `help`) VALUES
+((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat_threads'), get_field_id('title'), 'Agentic Threads', 'Page title shown in the admin sidebar.');
+
 INSERT IGNORE INTO `pages` (`id`, `keyword`, `url`, `protocol`, `id_actions`, `id_navigation_section`, `parent`, `is_headless`, `nav_position`, `footer_position`, `id_type`, `id_pageAccessTypes`)
 VALUES (
     NULL,
@@ -175,6 +190,7 @@ VALUES (
 SET @id_page_agentic_threads = (SELECT id FROM pages WHERE keyword = 'sh_module_llm_agentic_chat_threads');
 
 INSERT IGNORE INTO `pages_fields_translation` (`id_pages`, `id_fields`, `id_languages`, `content`) VALUES
+(@id_page_agentic_threads, get_field_id('title'), '0000000001', 'Agentic Threads'),
 (@id_page_agentic_threads, get_field_id('title'), '0000000003', 'Agentic Threads'),
 (@id_page_agentic_threads, get_field_id('title'), '0000000002', 'Agentic Threads');
 

@@ -17,13 +17,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `pages_fields_translation` (mirroring `sh-shp-llm` v1.0.0) and
   `Sh_module_llm_agentic_chatModel::getSetting()` falls back to the supplied
   default when a translation row is empty.
-- *Kein Zugriff* on `/admin/module_llm_agentic_chat/threads` after re-running
-  the v1.0.0 migration on top of an older draft. `INSERT IGNORE` on `pages`
-  silently keeps stale rows that still carry `id_actions = 'backend'`, which
-  in turn routes `Selfhelp::web_call()` to the missing `create_*_page`
-  function and renders the "no access" page. Added idempotent `UPDATE`
-  statements that realign `id_actions`, `nav_position` and `is_headless` for
-  both admin pages so re-runs converge to the canonical configuration.
+- *Kein Zugriff* on `/admin/module_llm_agentic_chat/threads`. The
+  `sh_module_llm_agentic_chat_threads` pageType had no `pageType_fields`
+  rows linked to it, so `get_page_fields_helper()` aggregated to NULL and
+  the parent `get_page_fields()` procedure short-circuited to
+  `SELECT * FROM pages WHERE 1=2`. `BasePage::fetch_page_info()` then
+  received an empty result, `id_page` defaulted to 0, the ACL check ran
+  against page id 0 and failed — even though the `acl_groups` row was
+  correct. The migration now links the standard `title` field into the
+  threads pageType (mirroring how every other admin page is wired up),
+  which is the minimum the helper needs to emit valid SQL.
 - Persona avatars now render correctly when the project lives under a
   non-root `BASE_PATH`. A new `resolveAvatarUrl()` helper prefixes
   document-root-relative paths with `BASE_PATH` (matching the global JS
