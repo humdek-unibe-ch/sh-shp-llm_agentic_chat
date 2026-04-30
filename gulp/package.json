@@ -1,0 +1,19 @@
+{
+  "name": "sh-shp-llm_agentic_chat-gulp",
+  "version": "1.0.0",
+  "description": "Build orchestration for the SelfHelp LLM Agentic Chat plugin (chat + admin bundles)",
+  "main": "gulpfile.js",
+  "scripts": {
+    "build": "gulp",
+    "watch": "gulp react-watch",
+    "react-install": "gulp react-install",
+    "react-build": "gulp react-build",
+    "clean": "gulp clean",
+    "help": "gulp help"
+  },
+  "devDependencies": {
+    "gulp": "^4.0.2"
+  },
+  "author": "SelfHelp Team",
+  "license": "MPL-2.0"
+}
