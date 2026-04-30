@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Inquiry teacher avatar">
+  <rect width="96" height="96" rx="48" fill="#6f42c1"/>
+  <circle cx="48" cy="36" r="15" fill="#fff"/>
+  <path d="M24 80c4-18 13-27 24-27s20 9 24 27" fill="#fff"/>
+  <path d="M58 22c0-8-5-13-13-13-6 0-10 3-13 8" fill="none" stroke="#e2d9f3" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="45" cy="29" r="3" fill="#6f42c1"/>
+  <circle cx="48" cy="64" r="3" fill="#6f42c1"/>
+</svg>

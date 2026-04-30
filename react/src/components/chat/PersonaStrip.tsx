@@ -39,6 +39,7 @@ export const PersonaStrip: React.FC<PersonaStripProps> = ({
     <div className="agentic-personas" role="list">
       {slotted.map(({ slot, persona }) => {
         const isActive = activePersonaKey === persona.key;
+        const avatarIsImage = !!persona.avatar && /^(\/|https?:\/\/|\.\/|\.\.\/).+\.(svg|png|jpe?g|webp|gif)(\?.*)?$/i.test(persona.avatar);
         return (
           <div
             key={persona.key}
@@ -52,7 +53,11 @@ export const PersonaStrip: React.FC<PersonaStripProps> = ({
               style={persona.color ? { backgroundColor: persona.color } : undefined}
               aria-hidden="true"
             >
-              {persona.avatar || persona.name.charAt(0).toUpperCase()}
+              {avatarIsImage ? (
+                <img src={persona.avatar} alt="" />
+              ) : (
+                persona.avatar || persona.name.charAt(0).toUpperCase()
+              )}
             </span>
             <span className="agentic-personas__name">{persona.name}</span>
           </div>

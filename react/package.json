@@ -6,9 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && vite build --config vite.admin.config.ts && node move-css.cjs",
+    "build": "tsc && vite build && vite build --config vite.admin.config.ts && vite build --config vite.threads.config.ts && node move-css.cjs",
     "build:chat": "tsc && vite build",
     "build:admin": "tsc && vite build --config vite.admin.config.ts",
+    "build:threads": "tsc && vite build --config vite.threads.config.ts",
     "preview": "vite preview",
     "watch": "vite build --watch",
     "typecheck": "tsc --noEmit"

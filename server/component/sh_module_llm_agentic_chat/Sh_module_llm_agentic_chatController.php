@@ -134,7 +134,6 @@ class Sh_module_llm_agentic_chatController extends BaseController
             'agentic_chat_defaults_path',
             'agentic_chat_health_path',
             'agentic_chat_timeout',
-            'agentic_chat_debug_enabled',
             'agentic_chat_default_module',
         ];
 
@@ -144,10 +143,6 @@ class Sh_module_llm_agentic_chatController extends BaseController
                 continue;
             }
             $cleanValue = is_scalar($value) ? (string) $value : '';
-            // Normalise booleans coming from React JSON.
-            if ($name === 'agentic_chat_debug_enabled') {
-                $cleanValue = ($value === true || $value === 1 || $value === '1' || $value === 'true') ? '1' : '0';
-            }
             // Strip trailing slash from base URL (defensive).
             if ($name === 'agentic_chat_backend_url') {
                 $cleanValue = rtrim($cleanValue, '/');

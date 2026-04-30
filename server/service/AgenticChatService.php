@@ -64,7 +64,7 @@ class AgenticChatService
      *
      * @return array{backend_url:string, reflect_path:string, configure_path:string,
      *               defaults_path:string, health_path:string, timeout:int,
-     *               debug_enabled:bool, default_module:string, personas:array}
+     *               default_module:string, personas:array}
      */
     public function getGlobalConfig()
     {
@@ -98,7 +98,6 @@ class AgenticChatService
             'defaults_path' => (string) ($fields['agentic_chat_defaults_path'] ?? AGENTIC_CHAT_DEFAULT_DEFAULTS_PATH),
             'health_path' => (string) ($fields['agentic_chat_health_path'] ?? AGENTIC_CHAT_DEFAULT_HEALTH_PATH),
             'timeout' => (int) ($fields['agentic_chat_timeout'] ?? AGENTIC_CHAT_DEFAULT_TIMEOUT),
-            'debug_enabled' => ($fields['agentic_chat_debug_enabled'] ?? '0') === '1',
             'default_module' => (string) ($fields['agentic_chat_default_module'] ?? ''),
             'personas' => $personas,
         ];

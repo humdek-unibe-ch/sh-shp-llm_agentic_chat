@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Inclusive teacher avatar">
+  <rect width="96" height="96" rx="48" fill="#198754"/>
+  <circle cx="48" cy="36" r="15" fill="#fff"/>
+  <path d="M24 79c4-17 13-26 24-26s20 9 24 26" fill="#fff"/>
+  <circle cx="24" cy="46" r="7" fill="#d1e7dd"/>
+  <circle cx="72" cy="46" r="7" fill="#d1e7dd"/>
+  <path d="M29 59c-7 3-12 9-15 18m53-18c7 3 12 9 15 18" stroke="#d1e7dd" stroke-width="6" stroke-linecap="round"/>
+</svg>

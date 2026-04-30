@@ -2,16 +2,17 @@
  * Gulp Build Configuration for LLM Agentic Chat Plugin
  * =====================================================
  *
- * Compiles two React UMD bundles via Vite:
- *   - js/ext/agentic-chat.umd.js   (frontend chat surface, used by agenticChat style)
- *   - js/ext/agentic-admin.umd.js  (admin module page sh_module_llm_agentic_chat)
+ * Compiles three React UMD bundles via Vite:
+ *   - js/ext/agentic-chat.umd.js     (frontend chat surface, used by agenticChat style)
+ *   - js/ext/agentic-admin.umd.js    (admin module page sh_module_llm_agentic_chat)
+ *   - js/ext/agentic-threads.umd.js  (admin threads / debug viewer page)
  *
- * Both bundles share React/ReactDOM and are emitted alongside their CSS files
- * (css/ext/agentic-chat.css, css/ext/agentic-admin.css).
+ * All bundles share React/ReactDOM and are emitted alongside their CSS files
+ * (css/ext/agentic-chat.css, css/ext/agentic-admin.css, css/ext/agentic-threads.css).
  *
  * Tasks:
  *   gulp react-install  -> npm install in ../react
- *   gulp react-build    -> npm run build (chat + admin + CSS move)
+ *   gulp react-build    -> npm run build (chat + admin + threads + CSS move)
  *   gulp react-watch    -> vite build --watch (chat bundle)
  *   gulp clean          -> remove built artefacts
  *   gulp                -> alias for react-build
@@ -47,7 +48,7 @@ gulp.task('react-install', function (cb) {
 });
 
 gulp.task('react-build', function (cb) {
-  console.log('Building React bundles (chat + admin)...');
+  console.log('Building React bundles (chat + admin + threads)...');
   runNpm('npm run build', cb);
 });
 
@@ -60,8 +61,10 @@ gulp.task('clean', function (cb) {
   const targets = [
     path.join(paths.react.jsOut, 'agentic-chat.umd.js'),
     path.join(paths.react.jsOut, 'agentic-admin.umd.js'),
+    path.join(paths.react.jsOut, 'agentic-threads.umd.js'),
     path.join(paths.react.cssOut, 'agentic-chat.css'),
     path.join(paths.react.cssOut, 'agentic-admin.css'),
+    path.join(paths.react.cssOut, 'agentic-threads.css'),
   ];
   targets.forEach(function (file) {
     if (fs.existsSync(file)) {
@@ -85,14 +88,15 @@ gulp.task('help', function (cb) {
     'sh-shp-llm_agentic_chat gulp tasks',
     '----------------------------------',
     '  gulp react-install   install React dependencies',
-    '  gulp react-build     build chat + admin bundles',
+    '  gulp react-build     build chat + admin + threads bundles',
     '  gulp react-watch     vite watch mode (chat bundle)',
     '  gulp clean           remove built js/css artefacts',
     '  gulp                 alias for react-build',
     '',
     'Outputs:',
-    '  js/ext/agentic-chat.umd.js,  css/ext/agentic-chat.css',
-    '  js/ext/agentic-admin.umd.js, css/ext/agentic-admin.css',
+    '  js/ext/agentic-chat.umd.js,    css/ext/agentic-chat.css',
+    '  js/ext/agentic-admin.umd.js,   css/ext/agentic-admin.css',
+    '  js/ext/agentic-threads.umd.js, css/ext/agentic-threads.css',
   ].join('\n'));
   cb();
 });

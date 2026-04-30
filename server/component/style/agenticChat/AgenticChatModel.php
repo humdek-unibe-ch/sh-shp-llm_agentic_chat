@@ -78,12 +78,10 @@ class AgenticChatModel extends StyleModel
         return $this->get_db_field('agentic_chat_auto_start', '1') === '1';
     }
 
-    /** @return bool Show the per-section debug panel (overrides global). */
+    /** @return bool Show the CMS debug panel for this style. */
     public function isDebugVisible()
     {
-        $globalConfig = $this->agenticService->getGlobalConfig();
-        $local = $this->get_db_field('agentic_chat_show_debug', '0') === '1';
-        return $local || $globalConfig['debug_enabled'];
+        return $this->get_db_field('debug', '0') === '1';
     }
 
     /** @return bool Show the persona avatars strip above messages. */
@@ -111,18 +109,13 @@ class AgenticChatModel extends StyleModel
     }
 
     /**
-     * Personas selected for this section. Returns the global library when
-     * no section-level subset is configured.
+     * Personas are configured globally in the module. The section stores
+     * only persona keys in agentic_chat_persona_slot_map.
      *
      * @return array
      */
     public function getSectionPersonas()
     {
-        $raw = (string) $this->get_db_field('agentic_chat_section_personas', '[]');
-        $sectionPersonas = $this->agenticService->getPersonaService()->parse($raw);
-        if (!empty($sectionPersonas)) {
-            return $sectionPersonas;
-        }
         $global = $this->agenticService->getGlobalConfig();
         return $global['personas'];
     }

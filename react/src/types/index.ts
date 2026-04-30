@@ -17,18 +17,18 @@ export interface Persona {
   instructions: string;
   /** Hex color used for badges/avatars. */
   color?: string;
-  /** Avatar emoji or short label. */
+  /** Avatar asset URL/path, emoji, or short label. */
   avatar?: string;
   /** Whether this persona is enabled and selectable. */
   enabled: boolean;
 }
 
 export type PersonaRole =
-  | 'mediator'
-  | 'teacher'
-  | 'expert'
-  | 'supporter'
-  | 'other';
+  | 'agentic_persona_role_mediator'
+  | 'agentic_persona_role_teacher'
+  | 'agentic_persona_role_expert'
+  | 'agentic_persona_role_supporter'
+  | 'agentic_persona_role_other';
 
 /** Map: backend-defined slot -> persona key. */
 export type PersonaSlotMap = Record<string, string | null>;
@@ -207,6 +207,8 @@ export interface PendingInterrupt {
 export interface AdminConfig {
   csrfToken: string;
   baseUrl: string;
+  /** URL of the threads admin page (used for cross-page links). */
+  threadsUrl?: string;
   pluginVersion: string;
 }
 
@@ -217,11 +219,84 @@ export interface BackendSettings {
   defaults_path: string;
   health_path: string;
   timeout: number;
-  debug_enabled: boolean;
   default_module: string;
 }
 
 export interface AdminInitialState {
   backend: BackendSettings;
   personas: Persona[];
+}
+
+/* ---------- Threads admin module ---------------------------------------- */
+
+export interface ThreadsAdminConfig {
+  csrfToken: string;
+  baseUrl: string;
+  /** URL of the configuration admin page (used for cross-page links). */
+  configBaseUrl?: string;
+  pluginVersion: string;
+}
+
+export interface ThreadListRow {
+  id: number;
+  id_llmConversations: number;
+  id_users: number;
+  id_sections: number | null;
+  agui_thread_id: string;
+  last_run_id: string | null;
+  backend_url: string;
+  status: string;
+  is_completed: 0 | 1 | boolean;
+  last_error: string | null;
+  usage_total_tokens: number | null;
+  usage_input_tokens: number | null;
+  usage_output_tokens: number | null;
+  created_at: string;
+  updated_at: string;
+  conversation_title: string | null;
+  user_email: string | null;
+  user_name: string | null;
+  message_count: number;
+}
+
+export interface ThreadListResponse {
+  rows: ThreadListRow[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+}
+
+export interface ThreadDetailMessage {
+  id: number;
+  role: string;
+  content: string;
+  sent_context: string | null;
+  sent_context_json: Record<string, unknown> | null;
+  created_at: string;
+  is_validated: 0 | 1 | boolean;
+}
+
+export interface ThreadDetail {
+  thread: Record<string, unknown> & {
+    id: number;
+    id_llmConversations: number;
+    agui_thread_id: string;
+    backend_url: string;
+    status: string;
+    is_completed: 0 | 1 | boolean;
+    persona_slot_map_json: Record<string, unknown> | null;
+    pending_interrupts_json: Record<string, unknown> | unknown[] | null;
+    debug_meta_json: Record<string, unknown> | null;
+  };
+  messages: ThreadDetailMessage[];
+}
+
+export interface ThreadCounters {
+  total: number;
+  idle: number;
+  running: number;
+  awaiting_input: number;
+  completed: number;
+  failed: number;
 }

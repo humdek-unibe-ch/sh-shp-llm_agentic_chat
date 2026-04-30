@@ -112,9 +112,6 @@ class Sh_module_llm_agentic_chatModel extends BaseModel
             'behaviour' => [
                 'label' => 'Behaviour',
                 'fields' => [
-                    $this->buildField('agentic_chat_debug_enabled', $fields, 'checkbox',
-                        'Show Debug Panel by Default',
-                        'When enabled, the chat surface exposes a debug panel for AG-UI events.'),
                     $this->buildField('agentic_chat_default_module', $fields, 'textarea',
                         'Default Module / Reflection Text',
                         'Used as the canonical context whenever a section does not define its own.'),
@@ -281,7 +278,6 @@ class Sh_module_llm_agentic_chatModel extends BaseModel
                 'defaults_path' => (string) ($fields['agentic_chat_defaults_path'] ?? AGENTIC_CHAT_DEFAULT_DEFAULTS_PATH),
                 'health_path' => (string) ($fields['agentic_chat_health_path'] ?? AGENTIC_CHAT_DEFAULT_HEALTH_PATH),
                 'timeout' => (int) ($fields['agentic_chat_timeout'] ?? AGENTIC_CHAT_DEFAULT_TIMEOUT),
-                'debug_enabled' => ($fields['agentic_chat_debug_enabled'] ?? '0') === '1',
                 'default_module' => (string) ($fields['agentic_chat_default_module'] ?? ''),
             ],
             'personas' => $this->personaService->parse($personasRaw),

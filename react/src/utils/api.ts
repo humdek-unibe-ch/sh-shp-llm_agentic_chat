@@ -5,7 +5,16 @@
  * just attach action / section_id query params and parse JSON.
  */
 
-import type { ThreadView, AgenticChatConfig, AdminInitialState, BackendSettings, Persona } from '../types';
+import type {
+  ThreadView,
+  AgenticChatConfig,
+  AdminInitialState,
+  BackendSettings,
+  Persona,
+  ThreadListResponse,
+  ThreadDetail,
+  ThreadCounters,
+} from '../types';
 
 export interface ApiOk<T> { ok: true; data: T; }
 export interface ApiErr { ok: false; error: string; status: number; }
@@ -134,7 +143,6 @@ export function createAdminApi(baseUrl: string, csrfToken: string): AdminApi {
         agentic_chat_defaults_path: settings.defaults_path,
         agentic_chat_health_path: settings.health_path,
         agentic_chat_timeout: settings.timeout,
-        agentic_chat_debug_enabled: settings.debug_enabled ? '1' : '0',
         agentic_chat_default_module: settings.default_module,
       };
       return post('save_config', { fields });
@@ -142,5 +150,39 @@ export function createAdminApi(baseUrl: string, csrfToken: string): AdminApi {
     savePersonas: (personas) => post('save_personas', { personas }),
     fetchDefaults: () => request(url('fetch_defaults'), { method: 'GET' }),
     healthCheck: () => request(url('health_check'), { method: 'GET' }),
+  };
+}
+
+/* ---------- Threads admin -------------------------------------------- */
+
+export interface ThreadsApi {
+  listThreads(filters: ThreadListFilters): Promise<ApiResult<{ ok: boolean; data: ThreadListResponse; statuses: string[] }>>;
+  getThreadDetail(threadId: number): Promise<ApiResult<{ ok: boolean; data: ThreadDetail }>>;
+  getCounters(): Promise<ApiResult<{ ok: boolean; data: ThreadCounters }>>;
+}
+
+export interface ThreadListFilters {
+  page?: number;
+  per_page?: number;
+  user_id?: number | string;
+  section_id?: number | string;
+  status?: string;
+  query?: string;
+}
+
+export function createThreadsApi(baseUrl: string): ThreadsApi {
+  const buildUrl = (action: string, extra: Record<string, string | number | undefined> = {}) => {
+    const sep = baseUrl.includes('?') ? '&' : '?';
+    const params = new URLSearchParams({ action });
+    Object.entries(extra).forEach(([k, v]) => {
+      if (v !== undefined && v !== '' && v !== null) params.set(k, String(v));
+    });
+    return `${baseUrl}${sep}${params.toString()}`;
+  };
+
+  return {
+    listThreads: (filters) => request(buildUrl('list_threads', filters as Record<string, string | number | undefined>), { method: 'GET' }),
+    getThreadDetail: (threadId) => request(buildUrl('get_thread_detail', { thread_id: threadId }), { method: 'GET' }),
+    getCounters: () => request(buildUrl('counters'), { method: 'GET' }),
   };
 }

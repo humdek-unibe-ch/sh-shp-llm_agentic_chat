@@ -18,18 +18,35 @@ configurable AG-UI workflow server.
 
 ## Features
 
-- **Global configuration page** at `/admin/module_llm_agentic_chat`:
+- **Shared admin shell** with a left sidebar and two pages:
+  - **Configuration** (`/admin/module_llm_agentic_chat`)
+  - **Threads** (`/admin/module_llm_agentic_chat/threads`)
+  Both reuse the same `AgenticChatAdminLayoutHelper` template so the look &
+  feel mirror the `sh-shp-llm` admin module exactly (Bootstrap 4.6, card
+  panels, sidebar navigation, etc.).
+- **Configuration page** with:
   - AG-UI backend URL (default: `https://tpf-test.humdek.unibe.ch/forestBackend`)
   - Endpoint paths (`/reflect`, `/reflect/configure`, `/reflect/defaults`, `/health`)
-  - Request timeout, debug-event visibility, default module/reflection content
-  - JSON-backed array of **personas**
-- **Persona editor** (React): editable rows/cards per persona with key,
-  display name, role slot, personality / instructions, color & avatar
-  metadata, and an enabled flag. Validates keys, rejects duplicates, and
-  recovers from invalid JSON.
+  - Request timeout and default module/reflection content
+  - Header buttons to probe `/health` and fetch `/reflect/defaults`
+  - JSON-backed global **persona library** edited through a compact card
+    list (avatar, name, role, key, enabled flag) + inline edit form
+- **Persona editor** (React): compact summary cards with quick edit /
+  duplicate / remove actions, an inline edit form that opens in place, and
+  validation badges for empty names, duplicate keys, missing instructions,
+  etc. Modelled after the API-keys editor in `sh-shp-llm`.
+- **Threads / debug viewer** lists every `agenticChatThreads` row with:
+  - Counter strip (total · idle · running · awaiting · completed · failed)
+  - Filters: free-text search, status, user id, section id
+  - Paginated table with status badges, message count, token usage
+  - Detail pane with three tabs: Messages, Debug (slot map · interrupts ·
+    debug events), and Raw (full thread JSON)
+  - Per-thread last error surfaced prominently for development triage
 - **CMS style `agenticChat`** for the page editor:
-  - Per-section module/reflection content, persona-slot mapping, labels,
-    colors, debug-event visibility, and completion message.
+  - Standard style fields: `css`, `css_mobile`, `condition`, `debug`, and
+    `data_config`.
+  - Per-section module/reflection override, persona-slot mapping by persona
+    key, labels, colors, and completion message.
 - **AG-UI streaming proxy:** the controller bridges the front-end and the
   backend SSE stream, persists visible user/assistant text in
   `llmMessages`, and stores AG-UI metadata (thread id, run ids, tool-call
@@ -62,6 +79,12 @@ The `mediator` persona is recognised for display/avatars but is not yet
 configurable on the backend; if/when the backend exposes a mediator slot,
 the persona system already handles it without further migrations.
 
+Personas are authored globally in the module config. A page section does not
+define its own personas; it only stores `agentic_chat_persona_slot_map`, a JSON
+object that links backend slots to persona keys. Avatar values can point to
+plugin assets such as
+`/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/mediator.svg`.
+
 ## Plugin structure
 
 ```
@@ -70,9 +93,11 @@ sh-shp-llm_agentic_chat/
 ├── CHANGELOG.md
 ├── server/
 │   ├── component/
-│   │   ├── AgenticChatHooks.php           Hook implementations (CMS field overrides)
-│   │   ├── style/agenticChat/             agenticChat CMS style
-│   │   └── sh_module_llm_agentic_chat/    Admin module for the config page
+│   │   ├── AgenticChatHooks.php                  Hook implementations (CMS field overrides)
+│   │   ├── style/agenticChat/                    agenticChat CMS style
+│   │   ├── moduleAgenticChatShared/              Shared admin sidebar layout helper
+│   │   ├── sh_module_llm_agentic_chat/           Admin module: configuration page
+│   │   └── sh_module_llm_agentic_chat_threads/   Admin module: threads / debug viewer
 │   ├── service/
 │   │   ├── globals.php                    Plugin constants + endpoint paths
 │   │   ├── AgenticChatBackendClient.php   Thin HTTP client for the AG-UI backend
@@ -82,12 +107,15 @@ sh-shp-llm_agentic_chat/
 │   ├── constants/AgenticChatLookups.php
 │   └── db/v1.0.0.sql                      Migration: page, fields, style, table, hooks
 ├── react/
-│   ├── src/AgenticChat.tsx                Front-end entry (mounts on .agentic-chat-root)
-│   ├── src/AgenticAdmin.tsx               Admin entry (mounts on #agentic-admin-root)
-│   ├── src/components/                    Chat shell, message list, persona editor, …
-│   ├── src/hooks/                         useAgenticThread, useAgUiStream, …
-│   ├── src/types/                         Shared TS interfaces
-│   └── src/utils/                         api.ts, ag-ui-events.ts, sse-parser.ts, …
+│   ├── src/AgenticChat.tsx                 Front-end entry (mounts on .agentic-chat-root)
+│   ├── src/AgenticAdmin.tsx                Admin config entry (mounts on #agentic-admin-root)
+│   ├── src/AgenticThreads.tsx              Admin threads entry (mounts on #agentic-threads-root)
+│   ├── src/components/admin/               BackendSettingsPanel, PersonaEditor, PersonaRow, AdminApp
+│   ├── src/components/threads/             ThreadsApp, ThreadList, ThreadDetail, ThreadFilters, ThreadCounters
+│   ├── src/components/chat/                Chat shell, message list, persona strip, …
+│   ├── src/hooks/                          useAgenticThread, useAgUiStream, …
+│   ├── src/types/                          Shared TS interfaces
+│   └── src/utils/                          api.ts, ag-ui-events.ts, sse-parser.ts, …
 ├── gulp/                                  Gulp wrapper around `npm run build`
 ├── js/ext/                                Built UMD bundles
 ├── css/ext/                               Built CSS
@@ -106,9 +134,12 @@ gulp build
 The build produces:
 
 - `js/ext/agentic-chat.umd.js` (front-end style)
-- `js/ext/agentic-admin.umd.js` (admin module)
+- `js/ext/agentic-admin.umd.js` (admin module – configuration page)
+- `js/ext/agentic-threads.umd.js` (admin module – threads / debug viewer)
 - `css/ext/agentic-chat.css`
 - `css/ext/agentic-admin.css`
+- `css/ext/agentic-threads.css`
+- `css/ext/agentic-admin-layout.css` (sidebar layout shared by both admin pages)
 
 ## License
 

@@ -1,38 +1,115 @@
-/* Agentic Admin - settings page styles */
+/* =========================================================
+   Agentic Admin React App Styles
+   Mirrors the LLM Settings card-based admin UI.
+   ========================================================= */
 
 .agentic-admin {
-  max-width: 1100px;
+    max-width: 960px;
 }
 
 .agentic-admin__header h2 {
-  margin: 0;
-  font-weight: 600;
+    margin: 0;
+    font-weight: 600;
+    font-size: 1.5rem;
 }
 
-.agentic-admin__section {
-  border: 1px solid #e3e6ea;
+.agentic-admin .card {
+    border: 1px solid #dee2e6;
+    box-shadow: none;
 }
 
-.agentic-admin__section .card-header {
-  background: #fafbfc;
-  font-weight: 600;
+.agentic-admin .card-header {
+    background: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    padding: 0.65rem 1rem;
 }
 
-.persona-row {
-  border-left: 4px solid #adb5bd;
+.agentic-admin .card-header h6 {
+    font-size: 0.9rem;
+    color: #343a40;
 }
+
+.agentic-admin .card-body {
+    padding: 1rem;
+}
+
+.agentic-admin .form-group {
+    margin-bottom: 0.85rem;
+}
+
+.agentic-admin .form-group:last-child {
+    margin-bottom: 0;
+}
+
+.agentic-admin label.small {
+    margin-bottom: 0.25rem;
+}
+
+/* ---- Persona summary rows ---- */
+
+.persona-summary {
+    transition: background 0.15s;
+}
+
+.persona-summary:hover {
+    background-color: #e9ecef !important;
+}
+
+.persona-summary--invalid {
+    border-color: #dc3545 !important;
+    background-color: #fff5f5 !important;
+}
+
+.persona-summary .min-width-0 {
+    min-width: 0;
+}
+
+/* ---- Persona inline edit form ---- */
 
 .persona-row--invalid {
-  border-left-color: #dc3545;
+    border-color: #dc3545 !important;
 }
 
 .persona-row__avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 50%;
-  color: #fff;
-  font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    color: #fff;
+    font-weight: 600;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.persona-row__avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* ---- Sticky save bar ---- */
+
+.agentic-admin-actions {
+    padding-top: 0.5rem;
+    border-top: 1px solid #e9ecef;
+}
+
+/* ---- Color picker compactness ---- */
+
+.agentic-admin input[type="color"].form-control-sm {
+    height: 31px;
+    padding: 2px;
+    width: 100%;
+    cursor: pointer;
+}
+
+/* ---- Loading splash inside the mount node ---- */
+
+.agentic-admin-root .agentic-admin-loading {
+    display: flex;
+    align-items: center;
+    color: #6c757d;
+    font-size: 0.875rem;
 }

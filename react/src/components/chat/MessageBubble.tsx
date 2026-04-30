@@ -25,6 +25,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 }) => {
   const isUser = role === 'user';
   const wrapperClass = `agentic-msg agentic-msg--${role}${isStreaming ? ' agentic-msg--streaming' : ''}`;
+  const avatarIsImage = !!persona?.avatar && /^(\/|https?:\/\/|\.\/|\.\.\/).+\.(svg|png|jpe?g|webp|gif)(\?.*)?$/i.test(persona.avatar);
 
   const avatar = isUser ? null : (
     <div
@@ -32,7 +33,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
       style={persona?.color ? { backgroundColor: persona.color } : undefined}
       aria-hidden="true"
     >
-      {persona?.avatar || (persona?.name ? persona.name.charAt(0).toUpperCase() : 'A')}
+      {avatarIsImage ? (
+        <img src={persona?.avatar} alt="" />
+      ) : (
+        persona?.avatar || (persona?.name ? persona.name.charAt(0).toUpperCase() : 'A')
+      )}
     </div>
   );
 

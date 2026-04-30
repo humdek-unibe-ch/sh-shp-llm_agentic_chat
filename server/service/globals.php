@@ -30,7 +30,9 @@ define('LLM_AGENTIC_CHAT_PLUGIN_VERSION', 'v1.0.0');
  * ========================================================================= */
 
 define('PAGE_LLM_AGENTIC_CHAT_CONFIG', 'sh_module_llm_agentic_chat');
+define('PAGE_LLM_AGENTIC_CHAT_THREADS', 'sh_module_llm_agentic_chat_threads');
 define('LLM_AGENTIC_CHAT_ADMIN_URL', '/admin/module_llm_agentic_chat');
+define('LLM_AGENTIC_CHAT_THREADS_URL', '/admin/module_llm_agentic_chat/threads');
 
 /* =========================================================================
  * BACKEND DEFAULTS (AG-UI / FoResTCHAT)

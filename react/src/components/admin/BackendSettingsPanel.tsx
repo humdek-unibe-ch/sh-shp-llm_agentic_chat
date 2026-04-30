@@ -1,196 +1,228 @@
 /**
- * BackendSettingsPanel - global backend URL + endpoint configuration.
+ * BackendSettingsPanel — global backend URL + endpoint configuration.
+ *
+ * Card-based panel mirroring sh-shp-llm's `ModelDefaultsSection` style:
+ * a clean Bootstrap 4.6 card with a header, body, dirty-tracked fields,
+ * and Test buttons in the header for /health and /reflect/defaults.
+ *
+ * @module components/admin/BackendSettingsPanel
  */
 import React, { useState } from 'react';
 import type { BackendSettings } from '../../types';
 
 export interface BackendSettingsPanelProps {
   initial: BackendSettings;
-  onSave: (settings: BackendSettings) => Promise<{ ok: boolean; error?: string }>;
+  value: BackendSettings;
+  onChange: (patch: Partial<BackendSettings>) => void;
   onTestHealth: () => Promise<{ ok: boolean; data?: Record<string, unknown>; error?: string }>;
   onFetchDefaults: () => Promise<{ ok: boolean; data?: Record<string, unknown>; error?: string }>;
+  disabled?: boolean;
 }
 
+interface ProbeResult {
+  kind: 'health' | 'defaults';
+  ok: boolean;
+  message: string;
+}
+
+/** BackendSettingsPanel component. */
 export const BackendSettingsPanel: React.FC<BackendSettingsPanelProps> = ({
   initial,
-  onSave,
+  value,
+  onChange,
   onTestHealth,
   onFetchDefaults,
+  disabled,
 }) => {
-  const [settings, setSettings] = useState<BackendSettings>(initial);
-  const [saving, setSaving] = useState(false);
-  const [savedAt, setSavedAt] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [healthMsg, setHealthMsg] = useState<string | null>(null);
-  const [defaultsMsg, setDefaultsMsg] = useState<string | null>(null);
+  const [probe, setProbe] = useState<ProbeResult | null>(null);
+  const [probing, setProbing] = useState<'health' | 'defaults' | null>(null);
 
-  const dirty = JSON.stringify(settings) !== JSON.stringify(initial);
+  const set = <K extends keyof BackendSettings>(key: K, v: BackendSettings[K]) =>
+    onChange({ [key]: v } as Partial<BackendSettings>);
 
-  const set = <K extends keyof BackendSettings>(key: K, value: BackendSettings[K]) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    setSaveError(null);
-    const res = await onSave(settings);
-    setSaving(false);
-    if (res.ok) {
-      setSavedAt(new Date().toLocaleTimeString());
-    } else {
-      setSaveError(res.error || 'Save failed');
-    }
-  };
-
-  const handleHealth = async () => {
-    setHealthMsg('Probing…');
+  const runHealth = async () => {
+    setProbing('health');
+    setProbe(null);
     const res = await onTestHealth();
-    setHealthMsg(res.ok ? `OK: ${JSON.stringify(res.data)}` : `Error: ${res.error}`);
+    setProbing(null);
+    setProbe({
+      kind: 'health',
+      ok: res.ok,
+      message: res.ok
+        ? `OK · ${truncate(JSON.stringify(res.data ?? {}), 220)}`
+        : `Error · ${res.error || 'Unknown error'}`,
+    });
   };
 
-  const handleDefaults = async () => {
-    setDefaultsMsg('Fetching…');
+  const runDefaults = async () => {
+    setProbing('defaults');
+    setProbe(null);
     const res = await onFetchDefaults();
-    setDefaultsMsg(res.ok ? `OK: ${JSON.stringify(res.data).slice(0, 220)}…` : `Error: ${res.error}`);
+    setProbing(null);
+    setProbe({
+      kind: 'defaults',
+      ok: res.ok,
+      message: res.ok
+        ? `OK · ${truncate(JSON.stringify(res.data ?? {}), 220)}`
+        : `Error · ${res.error || 'Unknown error'}`,
+    });
   };
+
+  const dirty = JSON.stringify(value) !== JSON.stringify(initial);
 
   return (
-    <section className="agentic-admin__section card mb-4">
-      <header className="card-header d-flex align-items-center">
-        <h4 className="mb-0 mr-auto">Backend settings</h4>
-        <button
-          type="button"
-          className="btn btn-outline-secondary btn-sm mr-2"
-          onClick={handleHealth}
-        >
-          Test /health
-        </button>
-        <button
-          type="button"
-          className="btn btn-outline-secondary btn-sm mr-2"
-          onClick={handleDefaults}
-        >
-          Fetch /reflect/defaults
-        </button>
-        <button
-          type="button"
-          className="btn btn-primary btn-sm"
-          onClick={handleSave}
-          disabled={saving || !dirty}
-        >
-          {saving ? 'Saving…' : dirty ? 'Save' : 'Saved'}
-        </button>
-      </header>
+    <div className="card mb-3">
+      <div className="card-header d-flex justify-content-between align-items-center">
+        <h6 className="mb-0">
+          <i className="fa fa-plug mr-2 text-muted"></i>
+          Backend Connection
+        </h6>
+        <div className="btn-group btn-group-sm">
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary"
+            onClick={runHealth}
+            disabled={!!probing}
+          >
+            {probing === 'health' ? (
+              <><span className="spinner-border spinner-border-sm mr-1" role="status" aria-hidden="true"></span>Testing…</>
+            ) : (
+              <><i className="fa fa-heartbeat mr-1"></i>Test /health</>
+            )}
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary"
+            onClick={runDefaults}
+            disabled={!!probing}
+          >
+            {probing === 'defaults' ? (
+              <><span className="spinner-border spinner-border-sm mr-1" role="status" aria-hidden="true"></span>Fetching…</>
+            ) : (
+              <><i className="fa fa-cloud-download-alt mr-1"></i>/reflect/defaults</>
+            )}
+          </button>
+        </div>
+      </div>
       <div className="card-body">
-        {savedAt && !dirty && (
-          <div className="alert alert-success py-1">Saved at {savedAt}.</div>
+        <p className="text-muted small mb-3">
+          AG-UI backend used by every <code>agenticChat</code> section.
+          {dirty && <span className="ml-2 badge badge-warning">unsaved</span>}
+        </p>
+
+        {probe && (
+          <div className={`alert ${probe.ok ? 'alert-info' : 'alert-warning'} small py-2 mb-3`} role="alert">
+            <strong className="mr-1">
+              {probe.kind === 'health' ? '/health:' : '/reflect/defaults:'}
+            </strong>
+            {probe.message}
+          </div>
         )}
-        {saveError && <div className="alert alert-danger py-1">{saveError}</div>}
-        {healthMsg && <div className="alert alert-info py-1">Health: {healthMsg}</div>}
-        {defaultsMsg && <div className="alert alert-info py-1">Defaults: {defaultsMsg}</div>}
 
         <div className="form-group">
-          <label htmlFor="backend-url">Backend base URL</label>
+          <label className="small font-weight-bold" htmlFor="backend-url">Backend Base URL</label>
           <input
             id="backend-url"
             type="url"
-            className="form-control"
-            value={settings.backend_url}
+            className="form-control form-control-sm"
+            value={value.backend_url}
             onChange={(e) => set('backend_url', e.target.value)}
+            placeholder="https://tpf-test.humdek.unibe.ch/forestBackend"
+            disabled={disabled}
           />
           <small className="form-text text-muted">
-            Without trailing slash. Live test backend:
-            <code> https://tpf-test.humdek.unibe.ch/forestBackend</code>
+            Base URL of the AG-UI backend, no trailing slash.
           </small>
         </div>
 
         <div className="form-row">
           <div className="form-group col-md-6">
-            <label htmlFor="reflect-path">/reflect path</label>
+            <label className="small font-weight-bold" htmlFor="reflect-path">/reflect path</label>
             <input
               id="reflect-path"
               type="text"
-              className="form-control"
-              value={settings.reflect_path}
+              className="form-control form-control-sm"
+              value={value.reflect_path}
               onChange={(e) => set('reflect_path', e.target.value)}
+              disabled={disabled}
             />
           </div>
           <div className="form-group col-md-6">
-            <label htmlFor="configure-path">/reflect/configure path</label>
+            <label className="small font-weight-bold" htmlFor="configure-path">/reflect/configure path</label>
             <input
               id="configure-path"
               type="text"
-              className="form-control"
-              value={settings.configure_path}
+              className="form-control form-control-sm"
+              value={value.configure_path}
               onChange={(e) => set('configure_path', e.target.value)}
+              disabled={disabled}
             />
           </div>
         </div>
 
         <div className="form-row">
           <div className="form-group col-md-6">
-            <label htmlFor="defaults-path">/reflect/defaults path</label>
+            <label className="small font-weight-bold" htmlFor="defaults-path">/reflect/defaults path</label>
             <input
               id="defaults-path"
               type="text"
-              className="form-control"
-              value={settings.defaults_path}
+              className="form-control form-control-sm"
+              value={value.defaults_path}
               onChange={(e) => set('defaults_path', e.target.value)}
+              disabled={disabled}
             />
           </div>
           <div className="form-group col-md-6">
-            <label htmlFor="health-path">/health path</label>
+            <label className="small font-weight-bold" htmlFor="health-path">/health path</label>
             <input
               id="health-path"
               type="text"
-              className="form-control"
-              value={settings.health_path}
+              className="form-control form-control-sm"
+              value={value.health_path}
               onChange={(e) => set('health_path', e.target.value)}
+              disabled={disabled}
             />
           </div>
         </div>
 
         <div className="form-row">
           <div className="form-group col-md-3">
-            <label htmlFor="timeout">Timeout (s)</label>
+            <label className="small font-weight-bold" htmlFor="timeout">Timeout (s)</label>
             <input
               id="timeout"
               type="number"
               min={1}
               max={600}
-              className="form-control"
-              value={settings.timeout}
+              className="form-control form-control-sm"
+              value={value.timeout}
               onChange={(e) => set('timeout', Number(e.target.value) || 0)}
+              disabled={disabled}
             />
-          </div>
-          <div className="form-group col-md-9 d-flex align-items-end">
-            <div className="custom-control custom-switch">
-              <input
-                id="debug-enabled"
-                type="checkbox"
-                className="custom-control-input"
-                checked={!!settings.debug_enabled}
-                onChange={(e) => set('debug_enabled', e.target.checked)}
-              />
-              <label className="custom-control-label" htmlFor="debug-enabled">
-                Show AG-UI debug panel by default
-              </label>
-            </div>
+            <small className="form-text text-muted">Used for /reflect/configure and SSE streams.</small>
           </div>
         </div>
 
-        <div className="form-group">
-          <label htmlFor="default-module">Default module / reflection content</label>
+        <div className="form-group mb-0">
+          <label className="small font-weight-bold" htmlFor="default-module">Default module / reflection content</label>
           <textarea
             id="default-module"
-            rows={6}
-            className="form-control"
-            value={settings.default_module}
+            rows={5}
+            className="form-control form-control-sm"
+            value={value.default_module}
             onChange={(e) => set('default_module', e.target.value)}
             placeholder="Paste module text used as the default reflection context for new threads."
+            disabled={disabled}
           />
+          <small className="form-text text-muted">
+            Falls back to this when a section doesn't define its own module body.
+          </small>
         </div>
       </div>
-    </section>
+    </div>
   );
 };
+
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return text.slice(0, max) + '…';
+}

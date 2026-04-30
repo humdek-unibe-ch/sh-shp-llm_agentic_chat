@@ -10,6 +10,7 @@ const path = require('path');
 const targets = [
   { src: 'agentic-chat.css', dst: 'agentic-chat.css' },
   { src: 'agentic-admin.css', dst: 'agentic-admin.css' },
+  { src: 'agentic-threads.css', dst: 'agentic-threads.css' },
 ];
 
 const jsDir = path.join(__dirname, '..', 'js', 'ext');

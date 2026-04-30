@@ -9,8 +9,7 @@
 --   2. Creates a new pageType (sh_module_llm_agentic_chat) and admin page
 --      (/admin/module_llm_agentic_chat) for global plugin configuration.
 --   3. Adds CMS field types and fields for backend URL, endpoint paths,
---      timeout, debug flag, default module content, and the global
---      persona JSON array.
+--      timeout, default module content, and the global persona library.
 --   4. Adds the `agenticChat` CMS style with section-level fields.
 --   5. Creates the `agenticChatThreads` table linking llmConversations
 --      to AG-UI thread metadata.
@@ -28,9 +27,14 @@ VALUES ('llm_agentic_chat', 'v1.0.0');
 
 
 -- -----------------------------------------------------------------------------
--- 2) Admin page type & page
+-- 2) Admin page types & pages
+--
+-- Two pages live under the admin section:
+--   - sh_module_llm_agentic_chat          -> Configuration (settings + personas)
+--   - sh_module_llm_agentic_chat_threads  -> Threads / debug viewer
 -- -----------------------------------------------------------------------------
 INSERT IGNORE INTO `pageType` (`name`) VALUES ('sh_module_llm_agentic_chat');
+INSERT IGNORE INTO `pageType` (`name`) VALUES ('sh_module_llm_agentic_chat_threads');
 
 
 -- -- New field type for the persona array editor (renders the React editor).
@@ -46,7 +50,6 @@ INSERT IGNORE INTO `fields` (`id`, `name`, `id_type`, `display`) VALUES
 (NULL, 'agentic_chat_defaults_path',        get_field_type_id('text'),     '0'),
 (NULL, 'agentic_chat_health_path',          get_field_type_id('text'),     '0'),
 (NULL, 'agentic_chat_timeout',              get_field_type_id('number'),   '0'),
-(NULL, 'agentic_chat_debug_enabled',        get_field_type_id('checkbox'), '0'),
 (NULL, 'agentic_chat_default_module',       get_field_type_id('textarea'), '0'),
 (NULL, 'agentic_chat_personas',             get_field_type_id('agentic-chat-personas'), '0'),
 (NULL, 'agentic_chat_panel',                get_field_type_id('panel'),    '0');
@@ -61,13 +64,24 @@ INSERT IGNORE INTO `pageType_fields` (`id_pageType`, `id_fields`, `default_value
 ((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_defaults_path'), '/reflect/defaults', 'Endpoint that returns default module text and persona instruction templates (GET).'),
 ((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_health_path'), '/health', 'Liveness probe endpoint (GET, no LLM cost).'),
 ((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_timeout'), '120', 'Default request timeout in seconds for backend calls.'),
-((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_debug_enabled'), '0', 'When enabled, the chat surface exposes a debug panel showing every AG-UI event in real time.'),
 ((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_default_module'), '', 'Default module / reflection text injected into every new AG-UI thread when the section does not provide its own.'),
-((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_personas'), '[]', 'Global persona library, stored as a JSON array. Each persona has: key, name, role, instructions, color, avatar, enabled.'),
+((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_personas'), '[{"key":"mediator","name":"Mediator","role":"agentic_persona_role_mediator","personality":"Orchestrates the reflection flow and hands off to specialist voices.","instructions":"You mediate the reflection conversation. Use the module content to keep the discussion focused and hand off to specialist personas when helpful.","color":"#495057","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/mediator.svg","enabled":true},{"key":"foundational_teacher","name":"Foundational Teacher","role":"agentic_persona_role_teacher","personality":"Clear, structured and grounding.","instructions":"You are the foundational teacher persona. Explain core ideas clearly and connect them to the module content: {module_content}","color":"#0d6efd","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/foundational-teacher.svg","enabled":true},{"key":"inclusive_teacher","name":"Inclusive Teacher","role":"agentic_persona_role_teacher","personality":"Warm, accessible and attentive to different learner needs.","instructions":"You are the inclusive teacher persona. Adapt the reflection to diverse perspectives and keep the tone supportive. Module content: {module_content}","color":"#198754","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inclusive-teacher.svg","enabled":true},{"key":"inquiry_teacher","name":"Inquiry Teacher","role":"agentic_persona_role_teacher","personality":"Curious, probing and question-led.","instructions":"You are the inquiry teacher persona. Ask thoughtful questions that help the learner examine assumptions and evidence. Module content: {module_content}","color":"#6f42c1","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inquiry-teacher.svg","enabled":true}]', 'Global persona library, stored as a JSON array. Each persona has: key, name, role, instructions, color, avatar asset path, enabled.'),
 ((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_panel'), NULL, 'Quick-link panel rendered above the form on the admin page.');
 
 
 -- -- Insert the admin page itself.
+--
+-- Notes on action / nav_position:
+--   * id_actions = 'component' makes SelfHelp instantiate the matching
+--     Sh_module_llm_agentic_chatComponent class via ComponentPage and serve
+--     the URL `/admin/module_llm_agentic_chat` directly. Using 'backend'
+--     here would cause NavView.php to fall back to /admin/cms/<id>, which
+--     is the CMS section editor — that's the bug we fixed.
+--   * nav_position = 220 makes the entry appear in the admin "Modules"
+--     dropdown next to the LLM plugin (which uses 200). The companion
+--     Threads page below intentionally has nav_position = NULL: it is a
+--     sub-page reachable only through the sidebar inside the shared
+--     AgenticChatAdminLayoutHelper layout.
 SET @id_page_modules_agentic = (SELECT id FROM pages WHERE keyword = 'sh_modules');
 
 INSERT IGNORE INTO `pages` (`id`, `keyword`, `url`, `protocol`, `id_actions`, `id_navigation_section`, `parent`, `is_headless`, `nav_position`, `footer_position`, `id_type`, `id_pageAccessTypes`)
@@ -76,7 +90,7 @@ VALUES (
     'sh_module_llm_agentic_chat',
     '/admin/module_llm_agentic_chat',
     'GET|POST',
-    (SELECT id FROM actions WHERE `name` = 'backend' LIMIT 1),
+    (SELECT id FROM actions WHERE `name` = 'component' LIMIT 1),
     NULL,
     @id_page_modules_agentic,
     0,
@@ -97,9 +111,8 @@ INSERT IGNORE INTO `pages_fields` (`id_pages`, `id_fields`, `default_value`, `he
 (@id_page_agentic_config, get_field_id('agentic_chat_defaults_path'),  '/reflect/defaults',  'Defaults endpoint path.'),
 (@id_page_agentic_config, get_field_id('agentic_chat_health_path'),    '/health',            'Liveness probe endpoint.'),
 (@id_page_agentic_config, get_field_id('agentic_chat_timeout'),        '120',                'Backend request timeout (seconds).'),
-(@id_page_agentic_config, get_field_id('agentic_chat_debug_enabled'),  '0',                  'Show debug panel for AG-UI events.'),
 (@id_page_agentic_config, get_field_id('agentic_chat_default_module'), '',                   'Default module text injected into new threads.'),
-(@id_page_agentic_config, get_field_id('agentic_chat_personas'),       '[]',                 'Global persona library (JSON array).'),
+(@id_page_agentic_config, get_field_id('agentic_chat_personas'),       '[{"key":"mediator","name":"Mediator","role":"agentic_persona_role_mediator","personality":"Orchestrates the reflection flow and hands off to specialist voices.","instructions":"You mediate the reflection conversation. Use the module content to keep the discussion focused and hand off to specialist personas when helpful.","color":"#495057","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/mediator.svg","enabled":true},{"key":"foundational_teacher","name":"Foundational Teacher","role":"agentic_persona_role_teacher","personality":"Clear, structured and grounding.","instructions":"You are the foundational teacher persona. Explain core ideas clearly and connect them to the module content: {module_content}","color":"#0d6efd","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/foundational-teacher.svg","enabled":true},{"key":"inclusive_teacher","name":"Inclusive Teacher","role":"agentic_persona_role_teacher","personality":"Warm, accessible and attentive to different learner needs.","instructions":"You are the inclusive teacher persona. Adapt the reflection to diverse perspectives and keep the tone supportive. Module content: {module_content}","color":"#198754","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inclusive-teacher.svg","enabled":true},{"key":"inquiry_teacher","name":"Inquiry Teacher","role":"agentic_persona_role_teacher","personality":"Curious, probing and question-led.","instructions":"You are the inquiry teacher persona. Ask thoughtful questions that help the learner examine assumptions and evidence. Module content: {module_content}","color":"#6f42c1","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inquiry-teacher.svg","enabled":true}]', 'Global persona library (JSON array).'),
 (@id_page_agentic_config, get_field_id('agentic_chat_panel'),          NULL,                 'Quick-link panel.');
 
 
@@ -112,6 +125,41 @@ INSERT IGNORE INTO `pages_fields_translation` (`id_pages`, `id_fields`, `id_lang
 -- -- Admin permissions.
 INSERT IGNORE INTO `acl_groups` (`id_groups`, `id_pages`, `acl_select`, `acl_insert`, `acl_update`, `acl_delete`)
 VALUES ((SELECT id FROM `groups` WHERE `name` = 'admin'), @id_page_agentic_config, '1', '0', '1', '0');
+
+
+-- -- Threads / debug viewer admin page.
+--
+-- This is a sub-page of the agentic chat module: it is reachable through
+-- the sidebar built by AgenticChatAdminLayoutHelper. It uses the same
+-- 'component' action so the URL stays clean (/admin/module_llm_agentic_chat/threads)
+-- and ComponentPage loads Sh_module_llm_agentic_chat_threadsComponent.
+-- nav_position is intentionally NULL so it does NOT show up as a separate
+-- entry in the top admin "Modules" dropdown (we only want one entry per
+-- plugin there, just like sh-shp-llm does for moduleLlmAdminConsole).
+INSERT IGNORE INTO `pages` (`id`, `keyword`, `url`, `protocol`, `id_actions`, `id_navigation_section`, `parent`, `is_headless`, `nav_position`, `footer_position`, `id_type`, `id_pageAccessTypes`)
+VALUES (
+    NULL,
+    'sh_module_llm_agentic_chat_threads',
+    '/admin/module_llm_agentic_chat/threads',
+    'GET|POST',
+    (SELECT id FROM actions WHERE `name` = 'component' LIMIT 1),
+    NULL,
+    @id_page_modules_agentic,
+    0,
+    NULL,
+    NULL,
+    (SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat_threads' LIMIT 1),
+    (SELECT id FROM lookups WHERE type_code = 'pageAccessTypes' AND lookup_code = 'mobile_and_web')
+);
+
+SET @id_page_agentic_threads = (SELECT id FROM pages WHERE keyword = 'sh_module_llm_agentic_chat_threads');
+
+INSERT IGNORE INTO `pages_fields_translation` (`id_pages`, `id_fields`, `id_languages`, `content`) VALUES
+(@id_page_agentic_threads, get_field_id('title'), '0000000003', 'Agentic Threads'),
+(@id_page_agentic_threads, get_field_id('title'), '0000000002', 'Agentic Threads');
+
+INSERT IGNORE INTO `acl_groups` (`id_groups`, `id_pages`, `acl_select`, `acl_insert`, `acl_update`, `acl_delete`)
+VALUES ((SELECT id FROM `groups` WHERE `name` = 'admin'), @id_page_agentic_threads, '1', '0', '0', '0');
 
 
 -- -----------------------------------------------------------------------------
@@ -129,10 +177,8 @@ VALUES (
 -- -- Style-specific fields.
 -- -- Internal (display=0): runtime / behaviour configuration.
 INSERT IGNORE INTO `fields` (`id`, `name`, `id_type`, `display`) VALUES
-(NULL, 'agentic_chat_section_personas', get_field_type_id('agentic-chat-personas'), '0'),
 (NULL, 'agentic_chat_persona_slot_map', get_field_type_id('json'), '0'),
 (NULL, 'agentic_chat_auto_start',       get_field_type_id('checkbox'), '0'),
-(NULL, 'agentic_chat_show_debug',       get_field_type_id('checkbox'), '0'),
 (NULL, 'agentic_chat_section_module',   get_field_type_id('textarea'), '0'),
 (NULL, 'agentic_chat_show_persona_strip', get_field_type_id('checkbox'), '0'),
 (NULL, 'agentic_chat_show_run_status',    get_field_type_id('checkbox'), '0');
@@ -156,12 +202,13 @@ INSERT IGNORE INTO `fields` (`id`, `name`, `id_type`, `display`) VALUES
 INSERT IGNORE INTO `styles_fields` (`id_styles`, `id_fields`, `default_value`, `help`) VALUES
 (get_style_id('agenticChat'), get_field_id('css'),         NULL, 'Allows to assign CSS classes to the root item of the style.'),
 (get_style_id('agenticChat'), get_field_id('css_mobile'),  NULL, 'Allows to assign CSS classes to the root item of the style for the mobile version.'),
+(get_style_id('agenticChat'), get_field_id('condition'),   NULL, 'The field `condition` allows to specify a condition. The value is JSON.'),
+(get_style_id('agenticChat'), get_field_id('debug'),       '0',  'Enable to display debug information for this style, including the AG-UI event panel.'),
+(get_style_id('agenticChat'), get_field_id('data_config'), '',   'The field `dataConfig` allows to configure data sources for the component.'),
 
 -- internal
-(get_style_id('agenticChat'), get_field_id('agentic_chat_section_personas'), '[]', 'Personas selected for this section (subset of the global library). Leave empty to fall back to the global library.'),
-(get_style_id('agenticChat'), get_field_id('agentic_chat_persona_slot_map'), '{}', 'JSON object mapping backend slots to persona keys. Example: {"foundational_instructions":"persona_a","inclusive_instructions":"persona_b","inquiry_instructions":"persona_c","mediator":"persona_d"}'),
+(get_style_id('agenticChat'), get_field_id('agentic_chat_persona_slot_map'), '{"mediator":"mediator","foundational_instructions":"foundational_teacher","inclusive_instructions":"inclusive_teacher","inquiry_instructions":"inquiry_teacher"}', 'JSON object mapping backend slots to persona keys from the global persona library. Example: {"foundational_instructions":"foundational_teacher","inclusive_instructions":"inclusive_teacher","inquiry_instructions":"inquiry_teacher","mediator":"mediator"}'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_auto_start'),       '1',   'When enabled, the chat sends the kickoff token __auto_start__ as soon as the user opens the section.'),
-(get_style_id('agenticChat'), get_field_id('agentic_chat_show_debug'),       '0',   'Show the AG-UI event debug panel below the chat (overrides the global setting locally).'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_section_module'),   '',    'Module / reflection text for this section. Falls back to the plugin default if empty.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_show_persona_strip'), '1', 'Show the strip with active/visited persona avatars above the messages.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_show_run_status'),    '1', 'Show the small run-status badge in the chat header.'),
@@ -221,7 +268,7 @@ CREATE TABLE IF NOT EXISTS `agenticChatThreads` (
         FOREIGN KEY (`id_sections`) REFERENCES `sections` (`id`) ON DELETE SET NULL,
     CONSTRAINT `fk_agenticChatThreads_llmConversations`
         FOREIGN KEY (`id_llmConversations`) REFERENCES `llmConversations` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+);
 
 
 -- -----------------------------------------------------------------------------
