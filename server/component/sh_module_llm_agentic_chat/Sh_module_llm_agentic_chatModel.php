@@ -245,6 +245,14 @@ class Sh_module_llm_agentic_chatModel extends BaseModel
     /**
      * Retrieve a single config field value (with optional default).
      *
+     * IMPORTANT: get_page_fields() reads strictly from
+     * pages_fields_translation and falls back to "" (empty string) when
+     * no translation row exists for the requested language. We therefore
+     * treat empty strings as "missing" and fall back to the supplied
+     * default — otherwise an unmigrated installation would feed an empty
+     * base URL straight into AgenticChatBackendClient and trigger
+     * "URL rejected: Malformed input to a URL function" from cURL.
+     *
      * @param string $name
      * @param string $default
      * @return string
@@ -252,7 +260,11 @@ class Sh_module_llm_agentic_chatModel extends BaseModel
     public function getSetting($name, $default = '')
     {
         $fields = $this->getPageFields();
-        return isset($fields[$name]) ? (string) $fields[$name] : $default;
+        if (!isset($fields[$name])) {
+            return $default;
+        }
+        $value = (string) $fields[$name];
+        return $value !== '' ? $value : $default;
     }
 
     /** @return AgenticChatPersonaService */
@@ -269,16 +281,16 @@ class Sh_module_llm_agentic_chatModel extends BaseModel
     public function getFlatInitialState()
     {
         $fields = $this->getPageFields();
-        $personasRaw = $fields['agentic_chat_personas'] ?? '[]';
+        $personasRaw = !empty($fields['agentic_chat_personas']) ? $fields['agentic_chat_personas'] : '[]';
         return [
             'backend' => [
-                'backend_url' => (string) ($fields['agentic_chat_backend_url'] ?? AGENTIC_CHAT_DEFAULT_BACKEND_URL),
-                'reflect_path' => (string) ($fields['agentic_chat_reflect_path'] ?? AGENTIC_CHAT_DEFAULT_REFLECT_PATH),
-                'configure_path' => (string) ($fields['agentic_chat_configure_path'] ?? AGENTIC_CHAT_DEFAULT_CONFIGURE_PATH),
-                'defaults_path' => (string) ($fields['agentic_chat_defaults_path'] ?? AGENTIC_CHAT_DEFAULT_DEFAULTS_PATH),
-                'health_path' => (string) ($fields['agentic_chat_health_path'] ?? AGENTIC_CHAT_DEFAULT_HEALTH_PATH),
-                'timeout' => (int) ($fields['agentic_chat_timeout'] ?? AGENTIC_CHAT_DEFAULT_TIMEOUT),
-                'default_module' => (string) ($fields['agentic_chat_default_module'] ?? ''),
+                'backend_url' => $this->getSetting('agentic_chat_backend_url', AGENTIC_CHAT_DEFAULT_BACKEND_URL),
+                'reflect_path' => $this->getSetting('agentic_chat_reflect_path', AGENTIC_CHAT_DEFAULT_REFLECT_PATH),
+                'configure_path' => $this->getSetting('agentic_chat_configure_path', AGENTIC_CHAT_DEFAULT_CONFIGURE_PATH),
+                'defaults_path' => $this->getSetting('agentic_chat_defaults_path', AGENTIC_CHAT_DEFAULT_DEFAULTS_PATH),
+                'health_path' => $this->getSetting('agentic_chat_health_path', AGENTIC_CHAT_DEFAULT_HEALTH_PATH),
+                'timeout' => (int) $this->getSetting('agentic_chat_timeout', (string) AGENTIC_CHAT_DEFAULT_TIMEOUT),
+                'default_module' => $this->getSetting('agentic_chat_default_module', ''),
             ],
             'personas' => $this->personaService->parse($personasRaw),
         ];

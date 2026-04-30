@@ -89,6 +89,10 @@
     object-fit: cover;
 }
 
+.persona-row__avatar--preview {
+    background-clip: padding-box;
+}
+
 /* ---- Sticky save bar ---- */
 
 .agentic-admin-actions {

@@ -122,6 +122,26 @@ INSERT IGNORE INTO `pages_fields_translation` (`id_pages`, `id_fields`, `id_lang
 (@id_page_agentic_config, get_field_id('title'), '0000000002', 'LLM Agentic Chat');
 
 
+-- -- Initial pages_fields_translation rows for language 1 (the canonical
+-- -- "internal" language that the admin model reads via get_page_fields).
+-- --
+-- -- Without these rows, get_page_fields() returns empty strings for all
+-- -- agentic_chat_* fields (it only consults pages_fields_translation, never
+-- -- the default_value of pages_fields). That made the admin controller call
+-- -- the backend client with an empty base URL, which cURL rejects with
+-- -- "URL rejected: Malformed input to a URL function". Mirrors how
+-- -- sh-shp-llm seeds its own llm_base_url / llm_default_model translations.
+INSERT IGNORE INTO `pages_fields_translation` (`id_pages`, `id_fields`, `id_languages`, `content`) VALUES
+(@id_page_agentic_config, get_field_id('agentic_chat_backend_url'),    '0000000001', 'https://tpf-test.humdek.unibe.ch/forestBackend'),
+(@id_page_agentic_config, get_field_id('agentic_chat_reflect_path'),   '0000000001', '/reflect'),
+(@id_page_agentic_config, get_field_id('agentic_chat_configure_path'), '0000000001', '/reflect/configure'),
+(@id_page_agentic_config, get_field_id('agentic_chat_defaults_path'),  '0000000001', '/reflect/defaults'),
+(@id_page_agentic_config, get_field_id('agentic_chat_health_path'),    '0000000001', '/health'),
+(@id_page_agentic_config, get_field_id('agentic_chat_timeout'),        '0000000001', '120'),
+(@id_page_agentic_config, get_field_id('agentic_chat_default_module'), '0000000001', ''),
+(@id_page_agentic_config, get_field_id('agentic_chat_personas'),       '0000000001', '[{"key":"mediator","name":"Mediator","role":"agentic_persona_role_mediator","personality":"Orchestrates the reflection flow and hands off to specialist voices.","instructions":"You mediate the reflection conversation. Use the module content to keep the discussion focused and hand off to specialist personas when helpful.","color":"#495057","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/mediator.svg","enabled":true},{"key":"foundational_teacher","name":"Foundational Teacher","role":"agentic_persona_role_teacher","personality":"Clear, structured and grounding.","instructions":"You are the foundational teacher persona. Explain core ideas clearly and connect them to the module content: {module_content}","color":"#0d6efd","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/foundational-teacher.svg","enabled":true},{"key":"inclusive_teacher","name":"Inclusive Teacher","role":"agentic_persona_role_teacher","personality":"Warm, accessible and attentive to different learner needs.","instructions":"You are the inclusive teacher persona. Adapt the reflection to diverse perspectives and keep the tone supportive. Module content: {module_content}","color":"#198754","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inclusive-teacher.svg","enabled":true},{"key":"inquiry_teacher","name":"Inquiry Teacher","role":"agentic_persona_role_teacher","personality":"Curious, probing and question-led.","instructions":"You are the inquiry teacher persona. Ask thoughtful questions that help the learner examine assumptions and evidence. Module content: {module_content}","color":"#6f42c1","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inquiry-teacher.svg","enabled":true}]');
+
+
 -- -- Admin permissions.
 INSERT IGNORE INTO `acl_groups` (`id_groups`, `id_pages`, `acl_select`, `acl_insert`, `acl_update`, `acl_delete`)
 VALUES ((SELECT id FROM `groups` WHERE `name` = 'admin'), @id_page_agentic_config, '1', '0', '1', '0');
@@ -160,8 +180,6 @@ INSERT IGNORE INTO `pages_fields_translation` (`id_pages`, `id_fields`, `id_lang
 
 INSERT IGNORE INTO `acl_groups` (`id_groups`, `id_pages`, `acl_select`, `acl_insert`, `acl_update`, `acl_delete`)
 VALUES ((SELECT id FROM `groups` WHERE `name` = 'admin'), @id_page_agentic_threads, '1', '0', '0', '0');
-
-
 -- -----------------------------------------------------------------------------
 -- 3) CMS style: agenticChat
 -- -----------------------------------------------------------------------------

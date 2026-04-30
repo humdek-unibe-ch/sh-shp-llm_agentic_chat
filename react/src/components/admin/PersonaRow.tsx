@@ -7,6 +7,7 @@
  */
 import React from 'react';
 import type { Persona } from '../../types';
+import { isImageAvatar, resolveAvatarUrl } from '../../utils/avatar';
 
 const ROLE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'agentic_persona_role_mediator', label: 'Mediator' },
@@ -36,8 +37,7 @@ export const PersonaRow: React.FC<PersonaRowProps> = ({
   onRemove,
   onClose,
 }) => {
-  const avatarIsImage = !!persona.avatar &&
-    /^(\/|https?:\/\/|\.\/|\.\.\/).+\.(svg|png|jpe?g|webp|gif)(\?.*)?$/i.test(persona.avatar);
+  const avatarIsImage = isImageAvatar(persona.avatar);
   const avatarFallback = persona.name?.[0]?.toUpperCase() ?? '?';
 
   return (
@@ -48,7 +48,11 @@ export const PersonaRow: React.FC<PersonaRowProps> = ({
           style={{ backgroundColor: persona.color || '#6c757d' }}
           aria-hidden="true"
         >
-          {avatarIsImage ? <img src={persona.avatar} alt="" /> : (persona.avatar || avatarFallback)}
+          {avatarIsImage ? (
+            <img src={resolveAvatarUrl(persona.avatar)} alt="" />
+          ) : (
+            persona.avatar || avatarFallback
+          )}
         </span>
         <strong className="mr-auto">
           {persona.name || <em className="text-muted">Persona #{index + 1}</em>}
@@ -132,14 +136,31 @@ export const PersonaRow: React.FC<PersonaRowProps> = ({
 
       <div className="form-group">
         <label className="small font-weight-bold" htmlFor={`persona-avatar-${index}`}>Avatar asset path or emoji</label>
-        <input
-          id={`persona-avatar-${index}`}
-          type="text"
-          className="form-control form-control-sm"
-          value={persona.avatar || ''}
-          onChange={(e) => onChange({ avatar: e.target.value })}
-          placeholder="🧑 or /server/plugins/sh-shp-llm_agentic_chat/assets/avatars/persona.svg"
-        />
+        <div className="d-flex align-items-center">
+          {avatarIsImage && (
+            <span
+              className="persona-row__avatar persona-row__avatar--preview mr-2 border"
+              style={{ backgroundColor: persona.color || '#6c757d' }}
+              aria-hidden="true"
+              title="Preview"
+            >
+              <img src={resolveAvatarUrl(persona.avatar)} alt="" />
+            </span>
+          )}
+          <input
+            id={`persona-avatar-${index}`}
+            type="text"
+            className="form-control form-control-sm"
+            value={persona.avatar || ''}
+            onChange={(e) => onChange({ avatar: e.target.value })}
+            placeholder="🧑   or   /assets/uploads/persona.svg   or   https://example.com/foo.png"
+          />
+        </div>
+        <small className="form-text text-muted">
+          Accepts: an emoji / short label (rendered as text), an absolute server path
+          like <code>/assets/uploads/foo.png</code> (a CMS-uploaded asset is automatically
+          prefixed with the project's <code>BASE_PATH</code>) or a full <code>https://</code> URL.
+        </small>
       </div>
 
       <div className="form-group">

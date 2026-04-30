@@ -6,6 +6,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.0] - 2026-04-30
 
+### Fixed
+- `?action=health_check` and `?action=fetch_defaults` no longer fail with cURL
+  error *"URL rejected: Malformed input to a URL function"*. The
+  `get_page_fields` stored procedure reads strictly from
+  `pages_fields_translation`; without seed rows for language `0000000001` the
+  admin model returned empty strings for `agentic_chat_backend_url` (and every
+  other backend field), so cURL was handed a relative path with no scheme/host.
+  The migration now seeds the canonical defaults into
+  `pages_fields_translation` (mirroring `sh-shp-llm` v1.0.0) and
+  `Sh_module_llm_agentic_chatModel::getSetting()` falls back to the supplied
+  default when a translation row is empty.
+- *Kein Zugriff* on `/admin/module_llm_agentic_chat/threads` after re-running
+  the v1.0.0 migration on top of an older draft. `INSERT IGNORE` on `pages`
+  silently keeps stale rows that still carry `id_actions = 'backend'`, which
+  in turn routes `Selfhelp::web_call()` to the missing `create_*_page`
+  function and renders the "no access" page. Added idempotent `UPDATE`
+  statements that realign `id_actions`, `nav_position` and `is_headless` for
+  both admin pages so re-runs converge to the canonical configuration.
+- Persona avatars now render correctly when the project lives under a
+  non-root `BASE_PATH`. A new `resolveAvatarUrl()` helper prefixes
+  document-root-relative paths with `BASE_PATH` (matching the global JS
+  constant exposed by SelfHelp); full URLs and `data:` URIs pass through
+  unchanged, and emoji/short-label values keep being rendered as text.
+
+### Changed
+- The persona delete button now uses the SelfHelp-wide `jquery-confirm`
+  dialog (`$.confirm({ type: 'red' })`) instead of `window.confirm`, so it
+  matches the look and feel of the rest of the CMS (button confirmations,
+  conversation deletion, etc.). Falls back to `window.confirm` only when
+  the library is unavailable (tests, partial bundles).
+- The persona avatar input now ships an inline preview, an updated
+  placeholder showing emoji / absolute path / full URL, and help text
+  explaining that absolute paths are auto-prefixed with `BASE_PATH`.
+
 ### Added
 - Initial release of the **LLM Agentic Chat** plugin (`sh-shp-llm_agentic_chat`).
 - Admin page `sh_module_llm_agentic_chat` at `/admin/module_llm_agentic_chat` with

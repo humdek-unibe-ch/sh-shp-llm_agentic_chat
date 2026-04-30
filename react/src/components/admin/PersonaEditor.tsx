@@ -12,6 +12,8 @@ import React, { useState } from 'react';
 import type { Persona } from '../../types';
 import { PersonaRow } from './PersonaRow';
 import { createEmptyPersona, slugifyPersonaKey } from '../../utils/persona-mapping';
+import { isImageAvatar, resolveAvatarUrl } from '../../utils/avatar';
+import { showConfirm } from '../../utils/confirm';
 
 export interface PersonaEditorProps {
   personas: Persona[];
@@ -25,8 +27,7 @@ interface AvatarProps {
 }
 
 const Avatar: React.FC<AvatarProps> = ({ persona }) => {
-  const isImage = !!persona.avatar &&
-    /^(\/|https?:\/\/|\.\/|\.\.\/).+\.(svg|png|jpe?g|webp|gif)(\?.*)?$/i.test(persona.avatar);
+  const isImage = isImageAvatar(persona.avatar);
   const fallback = (persona.name || persona.key || '?')[0]?.toUpperCase() ?? '?';
   return (
     <span
@@ -34,7 +35,11 @@ const Avatar: React.FC<AvatarProps> = ({ persona }) => {
       style={{ backgroundColor: persona.color || '#6c757d' }}
       aria-hidden="true"
     >
-      {isImage ? <img src={persona.avatar} alt="" /> : (persona.avatar || fallback)}
+      {isImage ? (
+        <img src={resolveAvatarUrl(persona.avatar)} alt="" />
+      ) : (
+        persona.avatar || fallback
+      )}
     </span>
   );
 };
@@ -93,8 +98,17 @@ export const PersonaEditor: React.FC<PersonaEditorProps> = ({
     setEditIndex(idx + 1);
   };
 
-  const remove = (idx: number) => {
-    if (!window.confirm('Remove this persona?')) return;
+  const remove = async (idx: number) => {
+    const target = personas[idx];
+    const label = target?.name?.trim() || target?.key?.trim() || `Persona #${idx + 1}`;
+    const confirmed = await showConfirm({
+      title: 'Remove persona',
+      message: `Remove the persona <strong>${label}</strong> from the global library? This cannot be undone unless you re-save the previous values.`,
+      confirmLabel: 'Remove',
+      cancelLabel: 'Cancel',
+      type: 'red',
+    });
+    if (!confirmed) return;
     const copy = personas.filter((_, i) => i !== idx);
     onChange(copy);
     if (editIndex === idx) setEditIndex(null);

@@ -5,6 +5,7 @@
 import React, { useMemo } from 'react';
 import type { Persona, PersonaSlotMap } from '../../types';
 import { indexPersonas } from '../../utils/persona-mapping';
+import { isImageAvatar, resolveAvatarUrl } from '../../utils/avatar';
 
 export interface PersonaStripProps {
   personas: Persona[];
@@ -39,7 +40,7 @@ export const PersonaStrip: React.FC<PersonaStripProps> = ({
     <div className="agentic-personas" role="list">
       {slotted.map(({ slot, persona }) => {
         const isActive = activePersonaKey === persona.key;
-        const avatarIsImage = !!persona.avatar && /^(\/|https?:\/\/|\.\/|\.\.\/).+\.(svg|png|jpe?g|webp|gif)(\?.*)?$/i.test(persona.avatar);
+        const avatarIsImage = isImageAvatar(persona.avatar);
         return (
           <div
             key={persona.key}
@@ -54,7 +55,7 @@ export const PersonaStrip: React.FC<PersonaStripProps> = ({
               aria-hidden="true"
             >
               {avatarIsImage ? (
-                <img src={persona.avatar} alt="" />
+                <img src={resolveAvatarUrl(persona.avatar)} alt="" />
               ) : (
                 persona.avatar || persona.name.charAt(0).toUpperCase()
               )}
