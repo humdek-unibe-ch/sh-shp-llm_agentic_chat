@@ -117,6 +117,7 @@ class AgenticChatBackendClient
             }
             return strlen($chunk);
         });
+        $this->applySslOptions($ch);
 
         curl_exec($ch);
         $error = curl_error($ch);
@@ -137,6 +138,31 @@ class AgenticChatBackendClient
     }
 
     /* Private helpers ******************************************************/
+
+    /**
+     * Apply SSL verification options to a cURL handle.
+     *
+     * Mirrors the established pattern from `LlmService::callLlmApi()` and
+     * the SelfHelp LLM plugin: when DEBUG is enabled (the typical
+     * developer / on-prem test setup) we disable peer/host verification
+     * because Windows + bundled PHP frequently ship without a usable
+     * CA bundle, which surfaces as
+     *
+     *   "SSL certificate problem: unable to get local issuer certificate"
+     *
+     * Production deployments leave DEBUG off and let cURL do full
+     * verification against the system CA bundle (or whatever
+     * `curl.cainfo` / `openssl.cafile` points to).
+     *
+     * @param resource|\CurlHandle $ch
+     */
+    private function applySslOptions($ch)
+    {
+        if (defined('DEBUG') && DEBUG) {
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        }
+    }
 
     /**
      * Generic JSON request with sensible cURL defaults.
@@ -161,6 +187,7 @@ class AgenticChatBackendClient
         curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $this->timeout);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+        $this->applySslOptions($ch);
 
         $headers = ['Accept: application/json'];
         if ($body !== null) {

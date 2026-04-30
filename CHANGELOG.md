@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - `?action=health_check` and `?action=fetch_defaults` no longer fail with cURL
+  error *"SSL certificate problem: unable to get local issuer certificate"*
+  on Windows / on-prem test installations whose bundled PHP is missing a
+  CA bundle. Mirroring the established pattern from
+  `LlmService::callLlmApi()`, `AgenticChatBackendClient` now disables peer
+  / host verification when `DEBUG` is on (developer / test mode) and
+  leaves full verification enabled in production. Both the JSON helper
+  (`jsonRequest()`) and the SSE streaming helper (`streamRun()`) share
+  the same `applySslOptions()` so all backend traffic is consistent.
+- `?action=health_check` and `?action=fetch_defaults` no longer fail with cURL
   error *"URL rejected: Malformed input to a URL function"*. The
   `get_page_fields` stored procedure reads strictly from
   `pages_fields_translation`; without seed rows for language `0000000001` the
