@@ -6,6 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.0] - 2026-05-01
 
+### Fixed
+- **Stable `agui_thread_id` across the conversation lifetime.** Every
+  `stream_run` for a section now reuses the very same AG-UI `thread_id`
+  that `getOrCreateThread()` produces on first interaction, both in the
+  `/reflect/configure` payload (persona registration) and in every
+  subsequent `/reflect` SSE call. When the React client jumps straight
+  to `stream_run` without an explicit `start_thread` (auto-start
+  disabled, manual send from a fresh tab, page refresh of a
+  never-configured thread), the controller now lazily POSTs the
+  personas + module content to `/reflect/configure` for that same
+  `thread_id` before streaming, instead of streaming into an
+  unregistered thread on the backend (which previously appeared to the
+  user as "each request generates a new thread_id" because the backend
+  could not correlate history without a prior configure call). The
+  configure round-trip is gated on `persona_slot_map IS NULL`, so it is
+  a no-op once the thread has been registered. `stream_run` also lifts
+  PHP's `max_execution_time` ceiling now (mirroring `start_thread` /
+  `reset_thread`) so the auto-configure step on a cold backend never
+  triggers a 504 mid-stream.
+
 ### Added
 - **Threads viewer playground.** The `/admin/module_llm_agentic_chat/threads`
   Debug tab now ships with two ready-to-paste cards (`POST /reflect/configure`

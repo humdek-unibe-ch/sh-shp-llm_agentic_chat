@@ -102,13 +102,16 @@ class AgenticChatController extends BaseController
         // The streaming action drops this buffer itself before flushing.
         ob_start();
 
-        // start_thread synchronously calls the upstream backend's
-        // /reflect/configure endpoint, which can take longer than PHP's
-        // default max_execution_time (30s) on a cold backend. Lift the
-        // ceiling so the caller never sees an Apache 504 / truncated
-        // response (which would surface in React as "Invalid JSON
-        // response"). The streaming action sets this independently.
-        if ($action === 'start_thread' || $action === 'reset_thread') {
+        // start_thread / reset_thread synchronously call the upstream
+        // backend's /reflect/configure endpoint, which can take longer
+        // than PHP's default max_execution_time (30s) on a cold backend.
+        // stream_run is intrinsically long-running (SSE) and may now also
+        // perform a lazy /reflect/configure on the very first run for a
+        // thread so the same agui_thread_id is reused for both calls.
+        // Lift the ceiling so the caller never sees an Apache 504 /
+        // truncated response (which would surface in React as "Invalid
+        // JSON response" or a half-streamed run that aborts mid-token).
+        if ($action === 'start_thread' || $action === 'reset_thread' || $action === 'stream_run') {
             @set_time_limit(0);
         }
 
@@ -193,6 +196,19 @@ class AgenticChatController extends BaseController
     /**
      * Stream a single AG-UI run as SSE through this same-origin endpoint.
      *
+     * The same `agui_thread_id` is reused for the lifetime of the
+     * conversation: it is generated once by `getOrCreateThread()` (when
+     * the user first interacts with this section), used by
+     * `/reflect/configure` to register the personas + module content on
+     * the backend, and then bound to every subsequent `/reflect` call so
+     * the backend can correlate run history. To make that contract hold
+     * even when the React client jumps straight to `stream_run` without
+     * an explicit `start_thread` (e.g. auto-start disabled, manual send
+     * from a fresh tab, page refresh of a never-configured thread), we
+     * auto-configure the thread here on its very first run. Subsequent
+     * runs detect `persona_slot_map !== null` and skip the configure
+     * round-trip, so this is a no-op once the thread is registered.
+     *
      * Request body fields:
      *   - section_id (already validated)
      *   - message    string            user input or auto-start token
@@ -202,6 +218,37 @@ class AgenticChatController extends BaseController
     {
         $sectionId = $this->model->getSectionId();
         $thread = $this->service->getOrCreateThread($userId, $sectionId);
+
+        // Lazily register the personas on the backend the first time
+        // this thread is used. `persona_slot_map` is the canonical "this
+        // thread has been configured" signal: it is set inside
+        // `configureThread()` together with `module_content`, and it is
+        // never cleared while the thread is active. Reusing the same
+        // `agui_thread_id` for the configure call guarantees that every
+        // later `/reflect` run carrying this thread_id finds the persona
+        // bindings and accumulated history server-side.
+        if (empty($thread['persona_slot_map'])) {
+            $slotMap = $this->model->buildBackendSlotMap();
+            $configureResult = $this->service->configureThread($thread, $slotMap);
+            $thread = $this->service->getThreadService()->getThreadById($thread['id']);
+            if (!$configureResult['ok']) {
+                // Without a configured thread the backend will reject the
+                // stream (or worse, silently start a fresh context). Surface
+                // the error to the React client instead of streaming into
+                // the void.
+                $this->startSseStream();
+                $this->sendSseEvent([
+                    'type' => 'PROXY_ERROR',
+                    'message' => $configureResult['error'] ?? 'Failed to configure thread',
+                    'status' => $configureResult['status'] ?? 500,
+                ]);
+                $this->sendSseEvent(['type' => 'PROXY_DONE', 'ok' => false]);
+                if (function_exists('uopz_allow_exit')) {
+                    uopz_allow_exit(true);
+                }
+                exit;
+            }
+        }
 
         $message = isset($_POST['message']) ? (string) $_POST['message'] : null;
         $resumeRaw = $_POST['resume'] ?? null;
