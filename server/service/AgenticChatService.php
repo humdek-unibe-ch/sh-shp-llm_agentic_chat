@@ -374,7 +374,21 @@ class AgenticChatService
             $sseHandler("\n\n");
         }
 
-        $finalStatus = $result['ok']
+        // The upstream backend signals errors in TWO different ways:
+        //   1. HTTP-level errors -> $result['ok'] === false
+        //   2. AG-UI RUN_ERROR event in the SSE stream while the HTTP
+        //      response itself was 200 OK (this is what the OpenAI
+        //      `resp_*` 404 looks like from the cURL side: the upstream
+        //      server returns 200, then emits "data: RUN_ERROR ...").
+        // Treat both as failures so the admin threads viewer surfaces
+        // the upstream error in `last_error` and the React client can
+        // recover via the "Conversation lost sync" banner.
+        $effectiveOk = $result['ok'] && $lastError === null;
+        $effectiveError = $result['ok']
+            ? $lastError
+            : ($result['error'] ?? $lastError);
+
+        $finalStatus = $effectiveOk
             ? ($caseClosed
                 ? AGENTIC_CHAT_STATUS_COMPLETED
                 : ($awaitingInput ? AGENTIC_CHAT_STATUS_AWAITING_INPUT : AGENTIC_CHAT_STATUS_IDLE))
@@ -383,7 +397,7 @@ class AgenticChatService
         $this->threadService->updateThread($thread['id'], array_filter([
             'status' => $finalStatus,
             'is_completed' => $caseClosed ? 1 : 0,
-            'last_error' => $result['ok'] ? null : ($result['error'] ?? $lastError),
+            'last_error' => $effectiveOk ? null : $effectiveError,
             'usage_input_tokens' => $usage['input'],
             'usage_output_tokens' => $usage['output'],
             'usage_total_tokens' => $usage['total'],
@@ -391,6 +405,13 @@ class AgenticChatService
         ], static function ($v) {
             return $v !== null;
         }));
+
+        // Surface the in-stream RUN_ERROR back to the caller too, so the
+        // controller can decide whether to emit a PROXY_ERROR SSE event.
+        if (!$effectiveOk && !isset($result['error'])) {
+            $result['ok'] = false;
+            $result['error'] = $effectiveError;
+        }
 
         return $result;
     }

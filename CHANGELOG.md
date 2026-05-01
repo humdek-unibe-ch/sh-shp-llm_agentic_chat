@@ -16,6 +16,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   button that builds a fresh `/reflect` body for that message (with new
   `run_id` / `messages[0].id` UUIDs) so you can replay a single turn from
   Postman without further editing.
+- **Fresh-thread sequence panel** in the Debug tab: generates a brand-new
+  `thread_id`, renders a paired `(configure → reflect)` block bound to it,
+  and lets admins replay the full upstream flow from Postman starting from
+  a clean conversation. Existing per-thread cards now also display the
+  bound `thread_id` badge so the shared id between `configure` and
+  `reflect` calls is obvious at a glance.
+
+### Fixed
+- **Upstream `RUN_ERROR` events are now persisted as `last_error` and
+  flip the thread to `failed` status.** Previously the cURL HTTP code
+  was 200 (the upstream server returns 200 even when the AG-UI workflow
+  fails mid-stream with a `data: RUN_ERROR ...` event), so the service
+  treated the run as successful and cleared `last_error` on the thread
+  row. The threads viewer therefore showed `idle` with no diagnostic
+  context for issues like the `agent_framework` *"Response with id
+  resp_… not found"* OpenAI 404. Both error paths (HTTP-level and
+  in-stream) are now mapped to the same `failed` outcome.
 
 ### Fixed
 - `?action=health_check` and `?action=fetch_defaults` no longer fail with cURL
