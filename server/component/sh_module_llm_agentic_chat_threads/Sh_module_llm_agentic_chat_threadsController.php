@@ -13,6 +13,8 @@ require_once __DIR__ . "/../AgenticChatJsonResponseTrait.php";
  *   ?action=list_threads       Paginated thread list with filters.
  *   ?action=get_thread_detail  Thread row + recent messages + debug events.
  *   ?action=counters           Aggregate counters for the dashboard banner.
+ *   ?action=filter_options     User + section drop-down option lists for the
+ *                              admin multi-select filters.
  *
  * All endpoints require ACL "select" on the threads page.
  */
@@ -59,6 +61,10 @@ class Sh_module_llm_agentic_chat_threadsController extends BaseController
                     $this->requireAccess('select');
                     $this->handleCounters();
                     break;
+                case 'filter_options':
+                    $this->requireAccess('select');
+                    $this->handleFilterOptions();
+                    break;
                 default:
                     $this->sendJsonResponse(['error' => 'Unknown action'], 400);
             }
@@ -91,6 +97,9 @@ class Sh_module_llm_agentic_chat_threadsController extends BaseController
     /** Returns paginated, filtered list of threads. */
     private function handleListThreads()
     {
+        // user_id / section_id may arrive as scalar (legacy single select),
+        // CSV string, or repeated `user_id[]=` array (multi-select). The model
+        // normalises these into integer arrays.
         $filters = [
             'user_id' => $_GET['user_id'] ?? null,
             'section_id' => $_GET['section_id'] ?? null,
@@ -106,6 +115,15 @@ class Sh_module_llm_agentic_chat_threadsController extends BaseController
             'ok' => true,
             'data' => $result,
             'statuses' => $this->model->getDistinctStatuses(),
+        ]);
+    }
+
+    /** Returns user + section drop-down option lists for the multi-select filters. */
+    private function handleFilterOptions()
+    {
+        $this->sendJsonResponse([
+            'ok' => true,
+            'data' => $this->model->getFilterOptions(),
         ]);
     }
 

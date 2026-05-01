@@ -189,10 +189,30 @@ class AgenticChatService
      * accumulating TEXT_MESSAGE_CONTENT deltas per message id and writing
      * the finalised assistant text into llmMessages on TEXT_MESSAGE_END.
      *
+     * AG-UI semantics implemented here:
+     *
+     *  - Each call generates a fresh `run_id` (UUID) and reuses the
+     *    persisted `agui_thread_id` from the thread row. The backend
+     *    keeps the conversation history per `thread_id`, so the upstream
+     *    `messages` array carries at most one entry: the new user input
+     *    for this turn (never the full history).
+     *  - When the previous run finished with an `interrupt` and the
+     *    client has a `$resume` payload, we send `messages: []` and put
+     *    the user response inside `$resume.interrupts[i].value[…]` per
+     *    https://docs.ag-ui.com/concepts/interrupts#resuming-a-run.
+     *    The visible `$userMessage` (if provided) is still logged to
+     *    `llmMessages` for audit but NOT echoed in upstream messages.
+     *
      * @param array        $thread       Thread row.
-     * @param string|null  $userMessage  User input for this turn (null = resume / kickoff only).
+     * @param string|null  $userMessage  Visible user input for this turn
+     *                                   (null = kickoff/resume only). Used
+     *                                   for `llmMessages` logging in all
+     *                                   modes; only included in the
+     *                                   upstream `messages` array when
+     *                                   `$resume` is empty.
      * @param array|null   $resume       AG-UI resume payload (optional).
-     * @param callable     $onChunk      function(string $rawChunk): bool|null - return false to abort.
+     * @param callable     $onChunk      function(string $rawChunk): bool|null
+     *                                   - return false to abort.
      * @return array{ok:bool, status:int, error?:string}
      */
     public function streamRun(array $thread, $userMessage, $resume, callable $onChunk)
@@ -216,28 +236,36 @@ class AgenticChatService
             'messages' => [],
         ];
 
-        if ($userMessage !== null && $userMessage !== '') {
-            $messageId = $this->generateLocalId();
-            $payload['messages'][] = [
-                'id' => $messageId,
-                'role' => 'user',
-                'content' => (string) $userMessage,
-            ];
+        $isResume = is_array($resume) && !empty($resume);
+        $hasUserMessage = $userMessage !== null && $userMessage !== '';
+        $userMessageString = $hasUserMessage ? (string) $userMessage : '';
+        $isKickoff = $hasUserMessage && trim($userMessageString) === AGENTIC_CHAT_AUTO_START_TOKEN;
 
-            // Persist visible user message immediately (we never need to
-            // wait for a backend confirmation - the user did type it).
-            // Skip the auto-start kickoff token from the visible log.
-            if (trim((string) $userMessage) !== AGENTIC_CHAT_AUTO_START_TOKEN) {
+        if ($hasUserMessage) {
+            // Resume turns put the user response inside the resume.interrupts[].value
+            // payload; sending the message again in `messages` would duplicate it
+            // server-side. New turns instead carry exactly one user message.
+            if (!$isResume) {
+                $payload['messages'][] = [
+                    'id' => $this->generateLocalId(),
+                    'role' => 'user',
+                    'content' => $userMessageString,
+                ];
+            }
+
+            // Persist the visible message into llmMessages immediately (skip the
+            // silent kickoff token so it doesn't pollute the chat history).
+            if (!$isKickoff) {
                 $this->threadService->appendMessage(
                     (int) $thread['id_llmConversations'],
                     'user',
-                    (string) $userMessage,
+                    $userMessageString,
                     null
                 );
             }
         }
 
-        if (is_array($resume) && !empty($resume)) {
+        if ($isResume) {
             $payload['resume'] = $resume;
         }
 
@@ -246,17 +274,31 @@ class AgenticChatService
         $caseClosed = false;
         $usage = ['input' => null, 'output' => null, 'total' => null];
         $lastError = null;
+        $pendingInterrupts = [];   // [{id, value}] captured from RUN_FINISHED.interrupt
+        $awaitingInput = false;
         $service = $this; // avoid PHP <7.4 "$this in static closure" pitfalls
         $threadRef = $thread;
+        // SSE byte buffer - cURL hands us arbitrary chunks that may split
+        // mid-event ("data: {...partial..."). We keep the leftover tail
+        // here so the next chunk can complete the event before parsing.
+        // Without this, every event whose JSON spans a chunk boundary
+        // is silently dropped (which produced garbled assistant text in
+        // llmMessages, e.g. "Hello!'m glad" instead of "Hello! I'm glad").
+        $sseBuffer = '';
 
         $sseHandler = function (string $rawChunk) use (
-            &$assistantBuffers, &$caseClosed, &$usage, &$lastError, $threadRef, $service, $onChunk
+            &$assistantBuffers, &$caseClosed, &$usage, &$lastError,
+            &$pendingInterrupts, &$awaitingInput, &$sseBuffer,
+            $threadRef, $service, $onChunk
         ) {
             $continue = $onChunk($rawChunk);
 
             // Parse the chunk to keep llmMessages in sync. The AG-UI wire
             // protocol uses standard SSE: each event is "data: <json>\n\n".
-            $events = $service->parseSseChunk($rawChunk);
+            // parseSseChunk is stateful via $sseBuffer: it returns only
+            // complete events and stores any unfinished tail back into
+            // the buffer for the next call.
+            $events = $service->parseSseChunk($rawChunk, $sseBuffer);
             foreach ($events as $event) {
                 if (!is_array($event) || !isset($event['type'])) {
                     continue;
@@ -294,6 +336,22 @@ class AgenticChatService
                         }
                     }
                     unset($assistantBuffers[(string) $messageId]);
+                } elseif ($type === 'RUN_FINISHED') {
+                    // Capture HITL interrupts. The AG-UI workflow attaches
+                    // them to the terminal RUN_FINISHED event as an array.
+                    $rawInterrupts = $event['interrupt'] ?? $event['interrupts'] ?? null;
+                    if (is_array($rawInterrupts)) {
+                        foreach ($rawInterrupts as $interrupt) {
+                            if (!is_array($interrupt) || empty($interrupt['id'])) {
+                                continue;
+                            }
+                            $pendingInterrupts[] = [
+                                'id' => (string) $interrupt['id'],
+                                'value' => $interrupt['value'] ?? null,
+                            ];
+                        }
+                        $awaitingInput = !empty($pendingInterrupts);
+                    }
                 } elseif ($type === AGENTIC_CHAT_EVT_RUN_ERROR) {
                     $lastError = $event['message'] ?? 'Unknown AG-UI error';
                 } elseif ($type === AGENTIC_CHAT_EVT_CUSTOM
@@ -310,15 +368,26 @@ class AgenticChatService
 
         $result = $client->streamRun($payload, $sseHandler, $cfg['reflect_path']);
 
+        // Drain any final event left in the SSE buffer (e.g. a terminal
+        // RUN_FINISHED that arrived without a trailing blank line).
+        if ($sseBuffer !== '') {
+            $sseHandler("\n\n");
+        }
+
+        $finalStatus = $result['ok']
+            ? ($caseClosed
+                ? AGENTIC_CHAT_STATUS_COMPLETED
+                : ($awaitingInput ? AGENTIC_CHAT_STATUS_AWAITING_INPUT : AGENTIC_CHAT_STATUS_IDLE))
+            : AGENTIC_CHAT_STATUS_FAILED;
+
         $this->threadService->updateThread($thread['id'], array_filter([
-            'status' => $result['ok']
-                ? ($caseClosed ? AGENTIC_CHAT_STATUS_COMPLETED : AGENTIC_CHAT_STATUS_IDLE)
-                : AGENTIC_CHAT_STATUS_FAILED,
+            'status' => $finalStatus,
             'is_completed' => $caseClosed ? 1 : 0,
             'last_error' => $result['ok'] ? null : ($result['error'] ?? $lastError),
             'usage_input_tokens' => $usage['input'],
             'usage_output_tokens' => $usage['output'],
             'usage_total_tokens' => $usage['total'],
+            'pending_interrupts' => $awaitingInput ? json_encode($pendingInterrupts) : json_encode([]),
         ], static function ($v) {
             return $v !== null;
         }));
@@ -328,28 +397,50 @@ class AgenticChatService
 
     /**
      * Parse a raw SSE chunk into AG-UI events.
-     * Public so the streaming callback can reuse it without binding $this.
      *
-     * @param string $rawChunk One or more "data: ...\n\n" SSE blocks.
-     * @return array<int, array> Decoded events.
+     * The cURL stream hands us arbitrarily-sized chunks that frequently
+     * split a single SSE event in the middle of its JSON payload (e.g.
+     * `data: {"type":"TEXT_MESSAGE_CONTENT","delta":"Hel`). To recover
+     * the dropped bytes we maintain a leftover buffer between calls -
+     * `$buffer` is taken by reference, the parser appends the new chunk,
+     * extracts every complete event terminated by a blank line, and
+     * stores the unfinished tail back into the buffer for the next call.
+     *
+     * Without this stateful behaviour the persisted assistant text in
+     * `llmMessages` was missing characters at every chunk boundary
+     * (visible to the user as garbled spelling/grammar after a refresh).
+     *
+     * @param string  $rawChunk Latest bytes received from cURL.
+     * @param string  $buffer   Leftover bytes from the previous chunk
+     *                          (in/out). Pass `''` for the first call.
+     * @return array<int, array> Decoded events that were complete after
+     *                           appending `$rawChunk` to `$buffer`.
      */
-    public function parseSseChunk($rawChunk)
+    public function parseSseChunk($rawChunk, &$buffer = '')
     {
         $events = [];
-        if ($rawChunk === '' || $rawChunk === null) {
+        if ($rawChunk !== null && $rawChunk !== '') {
+            $buffer .= (string) $rawChunk;
+        }
+        if ($buffer === '') {
             return $events;
         }
 
-        // SSE blocks separated by blank lines.
-        $blocks = preg_split('/\r?\n\r?\n/', (string) $rawChunk);
-        foreach ($blocks as $block) {
+        // SSE separator: a blank line. We split on it and keep the trailing
+        // (possibly empty) segment as the new buffer; everything before it
+        // is a complete event-block.
+        $parts = preg_split('/\r?\n\r?\n/', $buffer);
+        $buffer = (string) array_pop($parts);
+
+        foreach ($parts as $block) {
             if (trim($block) === '') {
                 continue;
             }
             $dataLines = [];
             foreach (preg_split('/\r?\n/', $block) as $line) {
                 if (strpos($line, 'data:') === 0) {
-                    $dataLines[] = ltrim(substr($line, 5));
+                    // Spec: optional single space after the colon.
+                    $dataLines[] = ltrim(substr($line, 5), ' ');
                 }
             }
             if (empty($dataLines)) {

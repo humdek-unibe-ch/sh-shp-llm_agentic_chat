@@ -13,7 +13,12 @@
 }
 
 /* Card container ---------------------------------------------------------- */
-
+/*
+ * Layout choice: the chat card grows naturally with the document instead
+ * of being forced to a fixed min-height. This avoids the classic "double
+ * scroller" problem where both the card body and the page have their own
+ * scrollbars: instead, the page itself is the only scroller.
+ */
 .agentic-chat {
   display: flex;
   flex-direction: column;
@@ -21,9 +26,8 @@
   border: 1px solid #e3e6ea;
   border-radius: 0.5rem;
   box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.04);
-  overflow: hidden;
+  overflow: visible;
   font-family: inherit;
-  min-height: 32rem;
 }
 
 .agentic-chat--loading {
@@ -88,6 +92,11 @@
 .agentic-status--running {
   background: #cfe2ff;
   color: #084298;
+}
+
+.agentic-status--awaiting {
+  background: #fff3cd;
+  color: #664d03;
 }
 
 .agentic-status--complete {
@@ -162,15 +171,18 @@
   min-height: 0;
 }
 
+/*
+ * The scroller no longer caps its own height. The chat card flows with
+ * the page; the page itself is the only scroller. This matches the
+ * baseline LLM chat (sh-shp-llm) layout and removes the "two scrollbars"
+ * bug visible when max-height was set to 60vh.
+ */
 .agentic-chat__scroller {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
   padding: 1rem;
   flex: 1 1 auto;
-  min-height: 18rem;
-  max-height: 60vh;
-  overflow-y: auto;
   background: #ffffff;
 }
 
@@ -358,15 +370,23 @@
   font-size: 0.75rem;
 }
 
-.agentic-input__btn {
+/*
+ * All three toolbar buttons (microphone, clear, send) share the exact
+ * same square footprint so the input bar reads as a coherent unit.
+ * Width / height are pinned to a fixed value to avoid Bootstrap's
+ * btn-sm padding shifting one button half a pixel relative to the
+ * others when the icon glyphs differ in width.
+ */
+.agentic-input__btn,
+.agentic-input__send {
+  width: 2.25rem;
+  height: 2.25rem;
   min-width: 2.25rem;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-
-.agentic-input__send {
-  min-width: 2.5rem;
+  line-height: 1;
 }
 
 .agentic-input__mic--recording {
@@ -418,7 +438,6 @@
 /* Responsive -------------------------------------------------------------- */
 
 @media (max-width: 576px) {
-  .agentic-chat__scroller { max-height: 50vh; }
   .agentic-msg__body { max-width: 92%; }
   .agentic-personas { padding: 0.4rem; }
   .agentic-input__count { display: none; }

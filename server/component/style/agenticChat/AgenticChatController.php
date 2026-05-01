@@ -97,6 +97,21 @@ class AgenticChatController extends BaseController
             return;
         }
 
+        // Capture any stray warnings/notices/whitespace emitted during
+        // action processing so they can't poison the JSON response.
+        // The streaming action drops this buffer itself before flushing.
+        ob_start();
+
+        // start_thread synchronously calls the upstream backend's
+        // /reflect/configure endpoint, which can take longer than PHP's
+        // default max_execution_time (30s) on a cold backend. Lift the
+        // ceiling so the caller never sees an Apache 504 / truncated
+        // response (which would surface in React as "Invalid JSON
+        // response"). The streaming action sets this independently.
+        if ($action === 'start_thread' || $action === 'reset_thread') {
+            @set_time_limit(0);
+        }
+
         $userId = $this->model->getUserId();
         if (!$userId) {
             $this->sendJsonResponse(['error' => 'User not authenticated'], 401);
@@ -400,22 +415,31 @@ class AgenticChatController extends BaseController
             ? json_decode((string) $thread['persona_slot_map'], true)
             : null;
 
+        $pendingInterrupts = !empty($thread['pending_interrupts'])
+            ? json_decode((string) $thread['pending_interrupts'], true)
+            : null;
+        if (!is_array($pendingInterrupts)) {
+            $pendingInterrupts = [];
+        }
+
         return [
             'thread' => [
-                'id'              => (int) $thread['id'],
-                'aguiThreadId'    => $thread['agui_thread_id'],
-                'lastRunId'       => $thread['last_run_id'] ?? null,
-                'status'          => $thread['status'],
-                'isCompleted'     => (int) ($thread['is_completed'] ?? 0) === 1,
-                'lastError'       => $thread['last_error'] ?? null,
-                'personaSlotMap'  => is_array($slotMap) ? $slotMap : new stdClass(),
-                'moduleContent'   => $thread['module_content'] ?? null,
-                'usage'           => [
+                'id'                => (int) $thread['id'],
+                'aguiThreadId'      => $thread['agui_thread_id'],
+                'lastRunId'         => $thread['last_run_id'] ?? null,
+                'status'            => $thread['status'],
+                'isCompleted'       => (int) ($thread['is_completed'] ?? 0) === 1,
+                'lastError'         => $thread['last_error'] ?? null,
+                'personaSlotMap'    => is_array($slotMap) ? $slotMap : new stdClass(),
+                'moduleContent'     => $thread['module_content'] ?? null,
+                'pendingInterrupts' => $pendingInterrupts,
+                'awaitingInput'     => !empty($pendingInterrupts),
+                'usage'             => [
                     'input'  => isset($thread['usage_input_tokens'])  ? (int) $thread['usage_input_tokens']  : null,
                     'output' => isset($thread['usage_output_tokens']) ? (int) $thread['usage_output_tokens'] : null,
                     'total'  => isset($thread['usage_total_tokens'])  ? (int) $thread['usage_total_tokens']  : null,
                 ],
-                'conversationId'  => (int) $thread['id_llmConversations'],
+                'conversationId'    => (int) $thread['id_llmConversations'],
             ],
             'messages' => $messages,
         ];

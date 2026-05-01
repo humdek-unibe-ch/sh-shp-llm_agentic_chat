@@ -3,7 +3,7 @@
  *
  * Wires together:
  *   - ThreadCounters (banner with total/idle/running/awaiting_input/completed/failed)
- *   - ThreadFilters (query, status, user_id, section_id)
+ *   - ThreadFilters (query, status, multi-select users + sections)
  *   - ThreadList (paginated table with click-to-select)
  *   - ThreadDetail (messages + debug events + raw JSON)
  *
@@ -20,7 +20,12 @@ import type {
   ThreadListResponse,
   ThreadListRow,
 } from '../../types';
-import { createThreadsApi, type ThreadListFilters } from '../../utils/api';
+import {
+  createThreadsApi,
+  type ThreadFilterOptions,
+  type ThreadListFilters,
+} from '../../utils/api';
+import type { MultiSelectOption } from './MultiSelect';
 import { ThreadCounters } from './ThreadCounters';
 import { ThreadFilters, type ThreadFiltersValue } from './ThreadFilters';
 import { ThreadList } from './ThreadList';
@@ -29,8 +34,8 @@ import { ThreadDetail } from './ThreadDetail';
 const DEFAULT_FILTERS: ThreadFiltersValue = {
   query: '',
   status: '',
-  user_id: '',
-  section_id: '',
+  user_ids: [],
+  section_ids: [],
 };
 
 export interface ThreadsAppProps {
@@ -50,6 +55,13 @@ export const ThreadsApp: React.FC<ThreadsAppProps> = ({ config }) => {
   const [loadingCounters, setLoadingCounters] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
 
+  // Filter options (multi-select dropdowns).
+  const [filterOptions, setFilterOptions] = useState<ThreadFilterOptions>({
+    users: [],
+    sections: [],
+  });
+  const [loadingOptions, setLoadingOptions] = useState(false);
+
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<ThreadDetailData | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -65,8 +77,10 @@ export const ThreadsApp: React.FC<ThreadsAppProps> = ({ config }) => {
       per_page: 25,
       query: filters.query.trim() || undefined,
       status: filters.status || undefined,
-      user_id: filters.user_id ? Number(filters.user_id) : undefined,
-      section_id: filters.section_id ? Number(filters.section_id) : undefined,
+      // Repeated `user_id[]=` / `section_id[]=` params; PHP normalises
+      // them into integer arrays in Sh_module_llm_agentic_chat_threadsModel.
+      user_id: filters.user_ids.length > 0 ? filters.user_ids : undefined,
+      section_id: filters.section_ids.length > 0 ? filters.section_ids : undefined,
     }),
     [filters]
   );
@@ -96,11 +110,25 @@ export const ThreadsApp: React.FC<ThreadsAppProps> = ({ config }) => {
     if (res.ok && res.data?.data) setCounters(res.data.data);
   }, [api]);
 
+  // One-shot fetch of users + sections for the multi-select pickers.
+  const loadFilterOptions = useCallback(async () => {
+    setLoadingOptions(true);
+    const res = await api.getFilterOptions();
+    setLoadingOptions(false);
+    if (res.ok && res.data?.data) {
+      setFilterOptions({
+        users: res.data.data.users || [],
+        sections: res.data.data.sections || [],
+      });
+    }
+  }, [api]);
+
   useEffect(() => {
     loadList(1);
     loadCounters();
+    loadFilterOptions();
     setPage(1);
-  }, [loadList, loadCounters]);
+  }, [loadList, loadCounters, loadFilterOptions]);
 
   // Debounce: refetch when filters change.
   useEffect(() => {
@@ -114,8 +142,8 @@ export const ThreadsApp: React.FC<ThreadsAppProps> = ({ config }) => {
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.query, filters.status, filters.user_id, filters.section_id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.query, filters.status, filters.user_ids, filters.section_ids]);
 
   /* ---- detail load -------------------------------------------------- */
 
@@ -161,6 +189,17 @@ export const ThreadsApp: React.FC<ThreadsAppProps> = ({ config }) => {
 
   /* ---- render ------------------------------------------------------- */
 
+  // Convert API option lists into the MultiSelect-friendly shape.
+  const userOptions: MultiSelectOption[] = filterOptions.users.map((u) => ({
+    id: u.id,
+    label: u.name || u.email || `User ${u.id}`,
+    hint: u.email && u.name ? u.email : undefined,
+  }));
+  const sectionOptions: MultiSelectOption[] = filterOptions.sections.map((s) => ({
+    id: s.id,
+    label: s.label,
+  }));
+
   return (
     <div className="agentic-threads">
       <header className="agentic-threads__header">
@@ -191,6 +230,9 @@ export const ThreadsApp: React.FC<ThreadsAppProps> = ({ config }) => {
           <ThreadFilters
             value={filters}
             statuses={statuses}
+            userOptions={userOptions}
+            sectionOptions={sectionOptions}
+            loadingOptions={loadingOptions}
             onChange={(patch) => setFilters((prev) => ({ ...prev, ...patch }))}
             onReset={handleReset}
             onRefresh={handleRefresh}

@@ -155,34 +155,75 @@ export function createAdminApi(baseUrl: string, csrfToken: string): AdminApi {
 
 /* ---------- Threads admin -------------------------------------------- */
 
+export interface ThreadFilterOptionUser {
+  id: number;
+  name: string;
+  email: string | null;
+  label: string;
+}
+
+export interface ThreadFilterOptionSection {
+  id: number;
+  name: string;
+  label: string;
+}
+
+export interface ThreadFilterOptions {
+  users: ThreadFilterOptionUser[];
+  sections: ThreadFilterOptionSection[];
+}
+
 export interface ThreadsApi {
   listThreads(filters: ThreadListFilters): Promise<ApiResult<{ ok: boolean; data: ThreadListResponse; statuses: string[] }>>;
   getThreadDetail(threadId: number): Promise<ApiResult<{ ok: boolean; data: ThreadDetail }>>;
   getCounters(): Promise<ApiResult<{ ok: boolean; data: ThreadCounters }>>;
+  getFilterOptions(): Promise<ApiResult<{ ok: boolean; data: ThreadFilterOptions }>>;
 }
 
 export interface ThreadListFilters {
   page?: number;
   per_page?: number;
-  user_id?: number | string;
-  section_id?: number | string;
+  /**
+   * User id filter. Can be a single id (legacy callers) or an array of
+   * ids (multi-select). Empty / undefined = no user filter.
+   */
+  user_id?: number | string | number[];
+  /**
+   * Section id filter. Same shape rules as `user_id`.
+   */
+  section_id?: number | string | number[];
   status?: string;
   query?: string;
 }
 
 export function createThreadsApi(baseUrl: string): ThreadsApi {
-  const buildUrl = (action: string, extra: Record<string, string | number | undefined> = {}) => {
+  /**
+   * Build a same-origin URL appending action + filter params. Arrays
+   * are encoded as repeated `key[]=value` entries so PHP receives them
+   * as `$_GET['key']` arrays automatically.
+   */
+  const buildUrl = (
+    action: string,
+    extra: Record<string, string | number | number[] | undefined> = {}
+  ) => {
     const sep = baseUrl.includes('?') ? '&' : '?';
     const params = new URLSearchParams({ action });
     Object.entries(extra).forEach(([k, v]) => {
-      if (v !== undefined && v !== '' && v !== null) params.set(k, String(v));
+      if (v === undefined || v === null || v === '') return;
+      if (Array.isArray(v)) {
+        if (v.length === 0) return;
+        for (const item of v) params.append(`${k}[]`, String(item));
+        return;
+      }
+      params.set(k, String(v));
     });
     return `${baseUrl}${sep}${params.toString()}`;
   };
 
   return {
-    listThreads: (filters) => request(buildUrl('list_threads', filters as Record<string, string | number | undefined>), { method: 'GET' }),
+    listThreads: (filters) => request(buildUrl('list_threads', filters as Record<string, string | number | number[] | undefined>), { method: 'GET' }),
     getThreadDetail: (threadId) => request(buildUrl('get_thread_detail', { thread_id: threadId }), { method: 'GET' }),
     getCounters: () => request(buildUrl('counters'), { method: 'GET' }),
+    getFilterOptions: () => request(buildUrl('filter_options'), { method: 'GET' }),
   };
 }

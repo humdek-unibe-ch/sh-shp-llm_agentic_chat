@@ -53,23 +53,68 @@ export function isCaseCompleteText(text: string, marker: string): boolean {
 }
 
 /**
- * Try to interpret a CUSTOM event as an interrupt prompt.
- * The exact shape depends on the workflow; we accept anything that
- * carries `name === 'interrupt'`.
+ * Try to interpret an AG-UI event as an HITL interrupt envelope. We
+ * accept two shapes the FoResTCHAT backend has been observed to emit:
+ *
+ *   1. `RUN_FINISHED` with `interrupt: [{ id, value }, ...]`
+ *      (preferred — see https://docs.ag-ui.com/concepts/interrupts)
+ *   2. `CUSTOM` with `name === 'interrupt'` and a `value` blob
+ *      (legacy, predates the official AG-UI interrupt protocol)
+ *
+ * Returns the FIRST interrupt found, or null when the event carries
+ * none. Multiple interrupts on a single RUN_FINISHED are passed up
+ * separately by the caller iterating over `extractInterruptsFromRunFinished`.
  */
 export function tryParseInterrupt(ev: AgUiEvent): PendingInterrupt | null {
-  if (ev.type !== 'CUSTOM') return null;
-  if (ev.name !== 'interrupt') return null;
-  const v = (ev.value ?? {}) as Record<string, unknown>;
+  // Variant 1: official AG-UI shape on RUN_FINISHED.
+  if (ev.type === 'RUN_FINISHED') {
+    const list = extractInterruptsFromRunFinished(ev);
+    return list.length > 0 ? list[0] : null;
+  }
 
-  return {
-    interruptId: String(v.interrupt_id ?? v.id ?? cryptoRandom()),
-    toolCallId: typeof v.tool_call_id === 'string' ? v.tool_call_id : undefined,
-    toolCallName: typeof v.tool_call_name === 'string' ? v.tool_call_name : undefined,
-    parentMessageId: typeof v.parent_message_id === 'string' ? v.parent_message_id : undefined,
-    prompt: typeof v.prompt === 'string' ? v.prompt : undefined,
-    payload: v,
-  };
+  // Variant 2: legacy CUSTOM-encoded interrupt.
+  if (ev.type === 'CUSTOM' && ev.name === 'interrupt') {
+    const v = (ev.value ?? {}) as Record<string, unknown>;
+    return {
+      interruptId: String(v.interrupt_id ?? v.id ?? cryptoRandom()),
+      toolCallId: typeof v.tool_call_id === 'string' ? v.tool_call_id : undefined,
+      toolCallName: typeof v.tool_call_name === 'string' ? v.tool_call_name : undefined,
+      parentMessageId: typeof v.parent_message_id === 'string' ? v.parent_message_id : undefined,
+      prompt: typeof v.prompt === 'string' ? v.prompt : undefined,
+      payload: v,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Pull every interrupt envelope out of a RUN_FINISHED event.
+ *
+ * Per the AG-UI protocol the backend attaches an `interrupt` array to
+ * the terminal RUN_FINISHED event whenever the agent is paused on a
+ * human-in-the-loop checkpoint. The next user message must then be
+ * sent as a `resume.interrupts[]` payload — never as a plain
+ * `messages[]` entry.
+ */
+export function extractInterruptsFromRunFinished(ev: AgUiEvent): PendingInterrupt[] {
+  if (ev.type !== 'RUN_FINISHED') return [];
+  const raw = (ev.interrupt ?? ev.interrupts) as unknown;
+  if (!Array.isArray(raw)) return [];
+
+  const result: PendingInterrupt[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const interrupt = item as Record<string, unknown>;
+    const id = typeof interrupt.id === 'string' && interrupt.id.length > 0
+      ? interrupt.id
+      : cryptoRandom();
+    result.push({
+      interruptId: id,
+      payload: interrupt as Record<string, unknown>,
+    });
+  }
+  return result;
 }
 
 function cryptoRandom(): string {

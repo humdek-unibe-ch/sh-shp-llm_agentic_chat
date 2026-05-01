@@ -96,6 +96,12 @@ export type ThreadStatus =
   | 'completed'
   | 'failed';
 
+/**
+ * Server-side projection of an `agenticChatThreads` row enriched with the
+ * conversation id and any HITL state required by the React UI to decide
+ * whether to auto-start a new run, resume an interrupted one, or do
+ * nothing at all on page load.
+ */
 export interface ThreadInfo {
   id: number;
   aguiThreadId: string;
@@ -105,6 +111,17 @@ export interface ThreadInfo {
   lastError: string | null;
   personaSlotMap: PersonaSlotMap | Record<string, never>;
   moduleContent: string | null;
+  /**
+   * AG-UI interrupts persisted on the thread row. Populated from the most
+   * recent RUN_FINISHED.interrupt[] payload. Empty when the next user
+   * message should start a fresh run instead of resuming a paused one.
+   */
+  pendingInterrupts: Array<{
+    id: string;
+    value: unknown;
+  }>;
+  /** Convenience flag mirroring `pendingInterrupts.length > 0`. */
+  awaitingInput: boolean;
   usage: {
     input: number | null;
     output: number | null;
@@ -181,6 +198,14 @@ export interface AgUiEvent {
   value?: unknown;
   /** MESSAGES_SNAPSHOT. */
   messages?: unknown[];
+  /**
+   * RUN_FINISHED interrupt payload (HITL).
+   *
+   * The AG-UI workflow uses `interrupt` (singular) by convention but
+   * some implementations emit `interrupts`; we accept both shapes.
+   */
+  interrupt?: unknown;
+  interrupts?: unknown;
   /** Other metadata is permitted but typed loosely. */
   [extra: string]: unknown;
 }
@@ -197,8 +222,26 @@ export interface InFlightMessage {
   endedAt?: number;
 }
 
-/** UI-side run status state machine. */
-export type RunStatus = 'idle' | 'starting' | 'running' | 'completed' | 'error';
+/**
+ * UI-side run status state machine.
+ *
+ *   idle           -> no run in progress, ready for the next user message
+ *   starting       -> /reflect/configure (or initial /reflect) is in flight
+ *   running        -> SSE stream is open, assistant tokens are arriving
+ *   awaiting_input -> RUN_FINISHED arrived with an `interrupt` array; the
+ *                     UI is waiting for the user to type their reply, which
+ *                     will be sent as an AG-UI resume payload
+ *   completed      -> the case has been explicitly closed (case_complete
+ *                     CUSTOM event or "Case complete." text marker)
+ *   error          -> RUN_ERROR / PROXY_ERROR / network failure
+ */
+export type RunStatus =
+  | 'idle'
+  | 'starting'
+  | 'running'
+  | 'awaiting_input'
+  | 'completed'
+  | 'error';
 
 /** Pending HITL interrupt envelope. */
 export interface PendingInterrupt {

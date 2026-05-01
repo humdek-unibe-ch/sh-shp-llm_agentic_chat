@@ -12,12 +12,25 @@ trait AgenticChatJsonResponseTrait
     /**
      * Send a JSON response and exit.
      *
+     * Discards any stray output that may have been emitted before this
+     * call (PHP warnings, deprecations, accidental whitespace from
+     * included files, etc.) so the response body is guaranteed to be
+     * valid JSON. Without this guard a single E_DEPRECATED notice from
+     * any plugin upstream of agenticChat would surface in the React UI
+     * as "Invalid JSON response".
+     *
      * @param array $data         Response payload.
      * @param int   $status_code  HTTP status code (default 200).
      */
     protected function sendJsonResponse($data, $status_code = 200)
     {
         $this->beforeSendJsonResponse();
+
+        // Drop any output buffers that may contain warnings/notices
+        // emitted earlier in the request lifecycle.
+        while (ob_get_level() > 0) {
+            @ob_end_clean();
+        }
 
         if (!headers_sent()) {
             http_response_code($status_code);
@@ -51,6 +64,10 @@ trait AgenticChatJsonResponseTrait
     /**
      * Stream Server-Sent Events headers and disable PHP/proxy buffering.
      * Call this once before forwarding SSE chunks.
+     *
+     * Any output buffers active at this point are *discarded* (not
+     * flushed) so a warning emitted upstream can't sneak into the SSE
+     * stream and corrupt the first event the React parser sees.
      */
     protected function startSseStream()
     {
@@ -61,9 +78,10 @@ trait AgenticChatJsonResponseTrait
             header('Expires: 0');
             header('X-Accel-Buffering: no'); // Nginx: disable response buffering.
         }
-        // Disable any output buffering layers.
+        // Drop any output buffers (including the one we may have started
+        // in dispatch() to capture warnings) - we want raw passthrough.
         while (ob_get_level() > 0) {
-            ob_end_flush();
+            @ob_end_clean();
         }
         @ob_implicit_flush(true);
     }

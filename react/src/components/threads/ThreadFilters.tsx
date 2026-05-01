@@ -1,20 +1,32 @@
 /**
  * ThreadFilters — filter inputs above the threads table.
  *
+ * Mirrors the multi-select UX used by `sh-shp-llm`'s admin console:
+ * users and sections are picked from a dropdown (populated from the
+ * `filter_options` API endpoint) instead of being typed by id. The
+ * caller is responsible for fetching the option lists; this component
+ * is purely presentational.
+ *
  * @module components/threads/ThreadFilters
  */
 import React from 'react';
+import { MultiSelect, type MultiSelectOption } from './MultiSelect';
 
 export interface ThreadFiltersValue {
   query: string;
   status: string;
-  user_id: string;
-  section_id: string;
+  /** Selected user ids (multi-select). */
+  user_ids: number[];
+  /** Selected section ids (multi-select). */
+  section_ids: number[];
 }
 
 export interface ThreadFiltersProps {
   value: ThreadFiltersValue;
   statuses: string[];
+  userOptions: MultiSelectOption[];
+  sectionOptions: MultiSelectOption[];
+  loadingOptions?: boolean;
   onChange: (patch: Partial<ThreadFiltersValue>) => void;
   onReset: () => void;
   onRefresh: () => void;
@@ -25,6 +37,9 @@ export interface ThreadFiltersProps {
 export const ThreadFilters: React.FC<ThreadFiltersProps> = ({
   value,
   statuses,
+  userOptions,
+  sectionOptions,
+  loadingOptions,
   onChange,
   onReset,
   onRefresh,
@@ -58,25 +73,25 @@ export const ThreadFilters: React.FC<ThreadFiltersProps> = ({
         </select>
       </div>
       <div>
-        <label className="small font-weight-bold mb-1" htmlFor="thr-user">User id</label>
-        <input
-          id="thr-user"
-          type="number"
-          className="form-control form-control-sm"
-          value={value.user_id}
-          onChange={(e) => onChange({ user_id: e.target.value })}
-          placeholder="all users"
+        <label className="small font-weight-bold mb-1">Users</label>
+        <MultiSelect
+          value={value.user_ids}
+          options={userOptions}
+          placeholder={loadingOptions ? 'Loading…' : 'All users'}
+          disabled={loadingOptions}
+          ariaLabel="Filter by users"
+          onChange={(next) => onChange({ user_ids: next })}
         />
       </div>
       <div>
-        <label className="small font-weight-bold mb-1" htmlFor="thr-section">Section id</label>
-        <input
-          id="thr-section"
-          type="number"
-          className="form-control form-control-sm"
-          value={value.section_id}
-          onChange={(e) => onChange({ section_id: e.target.value })}
-          placeholder="all sections"
+        <label className="small font-weight-bold mb-1">Sections</label>
+        <MultiSelect
+          value={value.section_ids}
+          options={sectionOptions}
+          placeholder={loadingOptions ? 'Loading…' : 'All sections'}
+          disabled={loadingOptions}
+          ariaLabel="Filter by sections"
+          onChange={(next) => onChange({ section_ids: next })}
         />
       </div>
       <div className="d-flex">

@@ -48,14 +48,26 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
         $where = ['c.deleted = 0'];
         $params = [];
 
-        if (!empty($filters['user_id'])) {
-            $where[] = 't.id_users = ?';
-            $params[] = (int) $filters['user_id'];
+        // user_id may be a single int or an array of ints (multi-select).
+        $userIds = $this->normalizeIdList($filters['user_id'] ?? null);
+        if (!empty($userIds)) {
+            $placeholders = implode(',', array_fill(0, count($userIds), '?'));
+            $where[] = "t.id_users IN ($placeholders)";
+            foreach ($userIds as $id) {
+                $params[] = $id;
+            }
         }
-        if (!empty($filters['section_id'])) {
-            $where[] = 't.id_sections = ?';
-            $params[] = (int) $filters['section_id'];
+
+        // section_id may be a single int or an array of ints (multi-select).
+        $sectionIds = $this->normalizeIdList($filters['section_id'] ?? null);
+        if (!empty($sectionIds)) {
+            $placeholders = implode(',', array_fill(0, count($sectionIds), '?'));
+            $where[] = "t.id_sections IN ($placeholders)";
+            foreach ($sectionIds as $id) {
+                $params[] = $id;
+            }
         }
+
         if (!empty($filters['status'])) {
             $where[] = 't.status = ?';
             $params[] = (string) $filters['status'];
@@ -224,6 +236,91 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
             'completed' => (int) ($row['completed'] ?? 0),
             'failed' => (int) ($row['failed'] ?? 0),
         ];
+    }
+
+    /**
+     * Build the user / section drop-down option lists for the threads
+     * viewer's multi-select filters. Mirrors the lookup pattern used by
+     * `sh-shp-llm`'s admin console so the two surfaces feel the same.
+     *
+     * Only entities that already have at least one agentic chat thread are
+     * returned, keeping the dropdowns focused and short.
+     *
+     * @return array{
+     *   users: array<int, array{id:int, name:string, email:string|null, label:string}>,
+     *   sections: array<int, array{id:int, name:string, label:string}>
+     * }
+     */
+    public function getFilterOptions()
+    {
+        $users = $this->db->query_db(
+            "SELECT DISTINCT u.id, u.name, u.email
+               FROM agenticChatThreads t
+               JOIN users u ON u.id = t.id_users
+              ORDER BY u.name, u.email"
+        ) ?: [];
+        $userOptions = array_map(static function ($row) {
+            $id = (int) $row['id'];
+            $name = trim((string) ($row['name'] ?? ''));
+            $email = trim((string) ($row['email'] ?? ''));
+            $labelParts = array_filter([$name !== '' ? $name : null, $email !== '' ? "($email)" : null]);
+            return [
+                'id' => $id,
+                'name' => $name,
+                'email' => $email !== '' ? $email : null,
+                'label' => $labelParts ? implode(' ', $labelParts) : ('User ' . $id),
+            ];
+        }, $users);
+
+        $sections = $this->db->query_db(
+            "SELECT DISTINCT s.id, s.name
+               FROM agenticChatThreads t
+               JOIN sections s ON s.id = t.id_sections
+              WHERE t.id_sections IS NOT NULL
+              ORDER BY s.name"
+        ) ?: [];
+        $sectionOptions = array_map(static function ($row) {
+            $id = (int) $row['id'];
+            $name = trim((string) ($row['name'] ?? ''));
+            return [
+                'id' => $id,
+                'name' => $name !== '' ? $name : ('Section ' . $id),
+                'label' => $name !== '' ? $name : ('Section ' . $id),
+            ];
+        }, $sections);
+
+        return [
+            'users' => $userOptions,
+            'sections' => $sectionOptions,
+        ];
+    }
+
+    /**
+     * Coerce a request filter value into a list of positive integer ids.
+     *
+     * Accepts:
+     *   - a comma-separated string (eg. "1,2,3")
+     *   - an array of strings/ints (eg. ["1","2"])
+     *   - a single scalar (eg. 5)
+     *   - null / empty → []
+     *
+     * @param mixed $raw
+     * @return array<int, int> Deduplicated, positive integer ids.
+     */
+    private function normalizeIdList($raw)
+    {
+        if ($raw === null || $raw === '' || $raw === false) {
+            return [];
+        }
+        $candidates = is_array($raw) ? $raw : explode(',', (string) $raw);
+        $ids = [];
+        foreach ($candidates as $candidate) {
+            $value = (int) $candidate;
+            if ($value > 0 && !in_array($value, $ids, true)) {
+                $ids[] = $value;
+            }
+        }
+        return $ids;
     }
 
     /**
