@@ -68,15 +68,21 @@ export function buildCurlPost(
 /**
  * Build a fresh `/reflect` body for a specific user message by cloning
  * the server-supplied template and filling in run_id, message id and
- * the chosen text.
+ * the chosen text. Optionally overrides the thread_id so the same body
+ * can be replayed against a brand-new thread (eg. from the "fresh
+ * sequence" debug panel).
  */
 export function buildRunBodyFor(
   template: Record<string, unknown>,
-  userMessage: string
+  userMessage: string,
+  threadIdOverride?: string
 ): Record<string, unknown> {
   // Deep-clone via JSON round-trip; the template only contains plain
   // primitives, arrays and objects so this is safe.
   const cloned = JSON.parse(JSON.stringify(template)) as Record<string, unknown>;
+  if (threadIdOverride) {
+    cloned.thread_id = threadIdOverride;
+  }
   cloned.run_id = generateUuid();
   if (Array.isArray(cloned.messages) && cloned.messages.length > 0) {
     const first = cloned.messages[0] as Record<string, unknown>;
@@ -88,5 +94,20 @@ export function buildRunBodyFor(
       { id: generateUuid(), role: 'user', content: userMessage },
     ];
   }
+  return cloned;
+}
+
+/**
+ * Clone a `/reflect/configure` body and rebind it to a different
+ * `thread_id`. Used by the "fresh sequence" panel so the persona +
+ * module instructions captured for the current thread can be replayed
+ * against a brand-new thread id end-to-end from Postman.
+ */
+export function rebindConfigureBody(
+  body: Record<string, unknown>,
+  threadId: string
+): Record<string, unknown> {
+  const cloned = JSON.parse(JSON.stringify(body)) as Record<string, unknown>;
+  cloned.thread_id = threadId;
   return cloned;
 }

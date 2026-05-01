@@ -9,7 +9,7 @@
  *
  * @module components/threads/ThreadDetail
  */
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import type {
   ThreadDetail as ThreadDetailData,
   ThreadDetailMessage,
@@ -17,7 +17,13 @@ import type {
 } from '../../types';
 import { StatusBadge } from './StatusBadge';
 import { CopyButton } from '../shared/CopyButton';
-import { buildCurlPost, buildRunBodyFor, prettyJson } from '../../utils/playground';
+import {
+  buildCurlPost,
+  buildRunBodyFor,
+  generateUuid,
+  prettyJson,
+  rebindConfigureBody,
+} from '../../utils/playground';
 
 export interface ThreadDetailProps {
   detail: ThreadDetailData | null;
@@ -122,10 +128,15 @@ interface PlaygroundCardProps {
   /** Short hint shown next to the title. */
   hint?: string;
   defaultOpen?: boolean;
+  /**
+   * If set, render a small "thread_id: …" caption inside the card so the
+   * shared id between paired configure/reflect cards is visually obvious.
+   */
+  threadIdHighlight?: string;
 }
 
 const PlaygroundCard: React.FC<PlaygroundCardProps> = ({
-  title, url, body, stream = false, hint, defaultOpen = false,
+  title, url, body, stream = false, hint, defaultOpen = false, threadIdHighlight,
 }) => {
   const bodyJson = useMemo(() => prettyJson(body), [body]);
   const curlString = useMemo(
@@ -162,6 +173,12 @@ const PlaygroundCard: React.FC<PlaygroundCardProps> = ({
       <div className="agentic-threads-playground__url">
         <strong>POST</strong>{url}
       </div>
+      {threadIdHighlight && (
+        <div className="agentic-threads-playground__threadid">
+          <span className="agentic-threads-playground__threadid-label">thread_id</span>
+          <code>{threadIdHighlight}</code>
+        </div>
+      )}
       <details open={defaultOpen}>
         <summary>Show JSON body</summary>
         <pre className="agentic-threads-detail__json">{bodyJson}</pre>
@@ -170,6 +187,111 @@ const PlaygroundCard: React.FC<PlaygroundCardProps> = ({
         <summary>Show curl one-liner</summary>
         <pre className="agentic-threads-detail__json">{curlString}</pre>
       </details>
+    </div>
+  );
+};
+
+/* ---------- Fresh thread sequence panel -------------------------------- */
+
+interface FreshThreadPanelProps {
+  playground: ThreadPlaygroundPayloads;
+}
+
+/**
+ * "Fresh sequence" Postman recipe: generate a brand-new `thread_id` and
+ * surface a paired `(configure → reflect)` block bound to it. Lets admins
+ * exercise the full upstream flow from outside the CMS without first
+ * having to start a chat session in the React client.
+ */
+const FreshThreadPanel: React.FC<FreshThreadPanelProps> = ({ playground }) => {
+  // Lazy-init so we only burn a UUID when the user actually opens the
+  // Debug tab - then keep it stable across re-renders until the user
+  // clicks "regenerate".
+  const [simThreadId, setSimThreadId] = useState<string>(() => generateUuid());
+  const [sampleMessage, setSampleMessage] = useState<string>(
+    playground.run.last_user_message
+      || 'Hello, I would like to start the reflection.'
+  );
+
+  const regenerate = useCallback(() => setSimThreadId(generateUuid()), []);
+
+  const configureBody = useMemo(
+    () => rebindConfigureBody(playground.configure.body, simThreadId),
+    [playground.configure.body, simThreadId]
+  );
+
+  // Reflect body keeps a placeholder run_id / message id at render time;
+  // each click of the Copy button re-derives them with fresh UUIDs.
+  const reflectPreviewBody = useMemo(
+    () => buildRunBodyFor(playground.run.body_template, sampleMessage, simThreadId),
+    [playground.run.body_template, sampleMessage, simThreadId]
+  );
+
+  return (
+    <div className="agentic-threads-fresh">
+      <div className="agentic-threads-fresh__header">
+        <div>
+          <h6 className="mb-1">Test sequence with a fresh thread_id</h6>
+          <small className="text-muted">
+            Generate a brand-new <code>thread_id</code>, then send the two
+            calls in order from Postman to exercise the full flow without
+            touching the CMS.
+          </small>
+        </div>
+        <button
+          type="button"
+          className="btn btn-sm btn-outline-primary"
+          onClick={regenerate}
+          title="Generate a brand-new thread_id (invalidates the recipe below)"
+        >
+          <i className="fa fa-random mr-1" aria-hidden="true" />
+          Regenerate
+        </button>
+      </div>
+
+      <div className="agentic-threads-fresh__threadid">
+        <span className="agentic-threads-fresh__threadid-label">
+          Bound thread_id
+        </span>
+        <code>{simThreadId}</code>
+        <CopyButton
+          value={simThreadId}
+          label=""
+          title="Copy thread_id"
+          variant="outline-secondary"
+          className="ml-2"
+        />
+      </div>
+
+      <div className="agentic-threads-fresh__field">
+        <label htmlFor="agentic-threads-fresh-msg" className="small mb-1">
+          Sample user message (used for step 2)
+        </label>
+        <textarea
+          id="agentic-threads-fresh-msg"
+          className="form-control form-control-sm"
+          rows={2}
+          value={sampleMessage}
+          onChange={(e) => setSampleMessage(e.target.value)}
+        />
+      </div>
+
+      <PlaygroundCard
+        title="Step 1 · POST /reflect/configure"
+        hint="Initialise the new thread (personas + module content)"
+        url={playground.configure.url}
+        body={configureBody}
+        threadIdHighlight={simThreadId}
+        defaultOpen
+      />
+      <PlaygroundCard
+        title="Step 2 · POST /reflect"
+        hint="Send the first user turn (fresh run_id / message id per copy)"
+        url={playground.run.url}
+        body={reflectPreviewBody}
+        stream
+        threadIdHighlight={simThreadId}
+      />
     </div>
   );
 };
@@ -296,12 +418,31 @@ export const ThreadDetail: React.FC<ThreadDetailProps> = ({
         {tab === 'debug' && (
           <div>
             {playground && (
+              <FreshThreadPanel playground={playground} />
+            )}
+
+            {playground && (
+              <div className="agentic-threads-fresh__divider">
+                <h6 className="mb-1">Replay this exact thread</h6>
+                <small className="text-muted">
+                  Same payloads the CMS already sent for thread{' '}
+                  <code>#{t.id}</code>. Both calls reuse the existing{' '}
+                  <code>thread_id</code>{' '}
+                  <code className="agentic-threads-fresh__threadid-inline">
+                    {t.agui_thread_id}
+                  </code>.
+                </small>
+              </div>
+            )}
+
+            {playground && (
               <>
                 <PlaygroundCard
                   title="1. POST /reflect/configure"
                   hint="Initialise this thread (personas + module content)"
                   url={playground.configure.url}
                   body={playground.configure.body}
+                  threadIdHighlight={t.agui_thread_id}
                 />
                 <PlaygroundCard
                   title="2. POST /reflect"
@@ -309,6 +450,7 @@ export const ThreadDetail: React.FC<ThreadDetailProps> = ({
                   url={playground.run.url}
                   body={playground.run.body_template}
                   stream={true}
+                  threadIdHighlight={t.agui_thread_id}
                 />
               </>
             )}
