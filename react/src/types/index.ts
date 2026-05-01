@@ -331,6 +331,39 @@ export interface ThreadDetailMessage {
   is_validated: 0 | 1 | boolean;
 }
 
+/**
+ * Developer-facing playground payloads attached to every thread detail
+ * response. Provides ready-to-paste bodies + URLs so admins can replay
+ * a thread against the upstream backend (Postman, curl, …).
+ */
+export interface ThreadPlaygroundPayloads {
+  backend: {
+    base_url: string;
+    configure_path: string;
+    reflect_path: string;
+    configure_url: string;
+    reflect_url: string;
+  };
+  configure: {
+    method: 'POST';
+    url: string;
+    /** Body sent to /reflect/configure (snapshot of the thread's init). */
+    body: Record<string, unknown>;
+  };
+  run: {
+    method: 'POST';
+    url: string;
+    /**
+     * Skeleton body for /reflect calls. `messages[0].content` is pre-filled
+     * with the most recent user message; `run_id` is a placeholder that
+     * the user has to replace with a fresh UUID.
+     */
+    body_template: Record<string, unknown>;
+    last_user_message: string | null;
+    run_id_placeholder: string;
+  };
+}
+
 export interface ThreadDetail {
   thread: Record<string, unknown> & {
     id: number;
@@ -344,6 +377,7 @@ export interface ThreadDetail {
     debug_meta_json: Record<string, unknown> | null;
   };
   messages: ThreadDetailMessage[];
+  playground?: ThreadPlaygroundPayloads;
 }
 
 export interface ThreadCounters {

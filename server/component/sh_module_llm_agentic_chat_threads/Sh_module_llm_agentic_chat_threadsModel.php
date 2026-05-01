@@ -4,6 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 require_once __DIR__ . "/../../../../../component/BaseModel.php";
+require_once __DIR__ . "/../../service/AgenticChatService.php";
 
 /**
  * Model for the LLM Agentic Chat Threads admin module.
@@ -17,10 +18,29 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
     /** @var int|null Page id of the threads admin page. */
     private $pageId;
 
+    /** @var AgenticChatService|null Lazy orchestrator for global config + payload helpers. */
+    private $agenticService;
+
     public function __construct($services)
     {
         parent::__construct($services);
         $this->pageId = $this->db->fetch_page_id_by_keyword(PAGE_LLM_AGENTIC_CHAT_THREADS);
+    }
+
+    /**
+     * Lazy access to the agentic chat orchestrator. Used to derive the
+     * "playground" payloads (configure body, run-payload template) shown
+     * in the threads viewer's Debug tab so admins can copy them straight
+     * into Postman / curl.
+     *
+     * @return AgenticChatService
+     */
+    private function getAgenticService()
+    {
+        if ($this->agenticService === null) {
+            $this->agenticService = new AgenticChatService($this->services);
+        }
+        return $this->agenticService;
     }
 
     /**
@@ -186,6 +206,113 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
         return [
             'thread' => $row,
             'messages' => $messages,
+            'playground' => $this->buildPlaygroundPayloads($row),
+        ];
+    }
+
+    /**
+     * Build the developer "playground" payloads attached to a thread detail
+     * response. Provides everything needed to reproduce a thread from the
+     * outside (Postman, curl, …) without having to re-derive it manually.
+     *
+     * The shape is:
+     * ```
+     *   {
+     *     backend: { base_url, configure_url, reflect_url, configure_path, reflect_path },
+     *     configure: { method, url, body },        // /reflect/configure body
+     *     run: {                                    // template for /reflect calls
+     *       method, url,
+     *       body_template,                         // payload skeleton
+     *       last_user_message: string|null,        // most recent user input
+     *       run_id_placeholder: string,            // value used in body_template.run_id
+     *     }
+     *   }
+     * ```
+     *
+     * @param array $thread Thread row already augmented with decoded JSON cols.
+     * @return array
+     */
+    private function buildPlaygroundPayloads(array $thread)
+    {
+        $cfg = $this->getAgenticService()->getGlobalConfig();
+        $personaService = $this->getAgenticService()->getPersonaService();
+
+        // Prefer the per-thread snapshot of the slot map so the configure
+        // payload reflects what was actually sent at thread-init time.
+        $slotMap = is_array($thread['persona_slot_map_json'] ?? null)
+            ? $thread['persona_slot_map_json']
+            : [];
+
+        // Same for module content - the row column captures what was sent.
+        $moduleContent = (string) ($thread['module_content']
+            ?? $cfg['default_module']
+            ?? '');
+
+        $threadId = (string) ($thread['agui_thread_id'] ?? '');
+        $backendUrl = rtrim((string) ($thread['backend_url']
+            ?? $cfg['backend_url']
+            ?? ''), '/');
+        $configurePath = (string) $cfg['configure_path'];
+        $reflectPath = (string) $cfg['reflect_path'];
+
+        $configureBody = $personaService->buildConfigurePayload(
+            $cfg['personas'],
+            $slotMap,
+            $moduleContent,
+            $threadId
+        );
+
+        // Most recent USER message is the natural "send this again" example
+        // we surface in the Debug tab. Per-message buttons populate
+        // `messages[0].content` with the chosen message client-side.
+        $lastUser = null;
+        $messages = $this->db->query_db(
+            "SELECT content FROM llmMessages
+              WHERE id_llmConversations = ? AND deleted = 0 AND role = 'user'
+           ORDER BY id DESC LIMIT 1",
+            [$thread['id_llmConversations']]
+        );
+        if (is_array($messages) && !empty($messages)) {
+            $lastUser = (string) ($messages[0]['content'] ?? '');
+        }
+
+        $runIdPlaceholder = '<generate-uuid-here>';
+        $runBodyTemplate = [
+            'thread_id' => $threadId,
+            'run_id' => $runIdPlaceholder,
+            'state' => new stdClass(),
+            'tools' => [],
+            'context' => [],
+            'forwardedProps' => new stdClass(),
+            'messages' => [
+                [
+                    'id' => '<message-uuid>',
+                    'role' => 'user',
+                    'content' => $lastUser ?? '<your user message here>',
+                ],
+            ],
+        ];
+
+        return [
+            'backend' => [
+                'base_url' => $backendUrl,
+                'configure_path' => $configurePath,
+                'reflect_path' => $reflectPath,
+                'configure_url' => $backendUrl . $configurePath,
+                'reflect_url' => $backendUrl . $reflectPath,
+            ],
+            'configure' => [
+                'method' => 'POST',
+                'url' => $backendUrl . $configurePath,
+                'body' => $configureBody,
+            ],
+            'run' => [
+                'method' => 'POST',
+                'url' => $backendUrl . $reflectPath,
+                'body_template' => $runBodyTemplate,
+                'last_user_message' => $lastUser,
+                'run_id_placeholder' => $runIdPlaceholder,
+            ],
         ];
     }
 

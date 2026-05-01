@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.0] - 2026-05-01
 
+### Added
+- **Threads viewer playground.** The `/admin/module_llm_agentic_chat/threads`
+  Debug tab now ships with two ready-to-paste cards (`POST /reflect/configure`
+  and `POST /reflect`) showing the exact JSON body + a `curl -N` one-liner
+  that will reproduce the upstream call, plus quick-copy buttons for the
+  AG-UI `thread_id`, the request URL, and the JSON / curl payloads. Each
+  user message in the Messages tab gets its own *JSON* and *curl* copy
+  button that builds a fresh `/reflect` body for that message (with new
+  `run_id` / `messages[0].id` UUIDs) so you can replay a single turn from
+  Postman without further editing.
+
 ### Fixed
 - `?action=health_check` and `?action=fetch_defaults` no longer fail with cURL
   error *"SSL certificate problem: unable to get local issuer certificate"*
