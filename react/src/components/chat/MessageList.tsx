@@ -1,6 +1,14 @@
 /**
  * MessageList - renders persisted messages + in-flight streaming bubbles.
  * Auto-scrolls to bottom when new content arrives.
+ *
+ * When `isStreaming` is true and there is no in-flight assistant text yet
+ * (the upstream agent is still "thinking" before emitting the first
+ * TEXT_MESSAGE_CONTENT delta), we render a typing indicator so the user
+ * gets immediate feedback that the request is being processed. Some
+ * agent_framework configurations buffer the entire response server-side
+ * and emit the text in a single delta after a noticeable delay; the
+ * typing dots prevent the UI from looking frozen during that window.
  */
 import React, { useEffect, useMemo, useRef } from 'react';
 import type { ChatMessage, InFlightMessage, Persona, PersonaSlotMap } from '../../types';
@@ -13,6 +21,8 @@ export interface MessageListProps {
   personas: Persona[];
   slotMap: PersonaSlotMap;
   autoStartToken: string;
+  /** True while the SSE connection is open. Drives the typing indicator. */
+  isStreaming?: boolean;
 }
 
 export const MessageList: React.FC<MessageListProps> = ({
@@ -21,15 +31,21 @@ export const MessageList: React.FC<MessageListProps> = ({
   personas,
   slotMap,
   autoStartToken,
+  isStreaming = false,
 }) => {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const personasByKey = useMemo(() => indexPersonas(personas), [personas]);
+
+  // Whether to show the bottom typing indicator: stream is open AND no
+  // assistant buffer has started yet (so the user has nothing visible).
+  const hasInFlightAssistant = inFlight.some((b) => b.role === 'assistant');
+  const showTypingIndicator = isStreaming && !hasInFlightAssistant;
 
   useEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages.length, inFlight.map((m) => m.text).join('|')]);
+  }, [messages.length, inFlight.map((m) => m.text).join('|'), showTypingIndicator]);
 
   const visibleMessages = useMemo(
     () =>
@@ -67,6 +83,20 @@ export const MessageList: React.FC<MessageListProps> = ({
           isStreaming
         />
       ))}
+
+      {showTypingIndicator && (
+        <div className="agentic-typing" role="status" aria-live="polite">
+          <div className="agentic-typing__avatar" aria-hidden="true">
+            <i className="fas fa-robot" />
+          </div>
+          <div className="agentic-typing__bubble">
+            <span className="agentic-typing__dot" />
+            <span className="agentic-typing__dot" />
+            <span className="agentic-typing__dot" />
+            <span className="sr-only">Responding…</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

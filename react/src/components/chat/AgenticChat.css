@@ -302,6 +302,74 @@
   to { visibility: hidden; }
 }
 
+/* Typing indicator -------------------------------------------------------- */
+/*
+ * Shown while we know the upstream agent is processing (SSE connection
+ * is open) but no TEXT_MESSAGE_CONTENT delta has arrived yet. Three
+ * pulsing dots inside an assistant-style bubble; no flicker, no layout
+ * shift when the real bubble eventually replaces it.
+ */
+.agentic-typing {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  margin: 0.25rem 0 0.5rem;
+  padding: 0 1rem;
+}
+
+.agentic-typing__avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #6c757d;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.agentic-typing__bubble {
+  background: #f1f3f5;
+  border: 1px solid #e3e6ea;
+  border-radius: 0.75rem;
+  padding: 0.5rem 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 2rem;
+}
+
+.agentic-typing__dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: #6c757d;
+  display: inline-block;
+  opacity: 0.4;
+  animation: agentic-typing-bounce 1.2s ease-in-out infinite;
+}
+
+.agentic-typing__dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.agentic-typing__dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes agentic-typing-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-0.25rem);
+    opacity: 1;
+  }
+}
+
 /* Footer / input bar ------------------------------------------------------ */
 
 .agentic-chat__footer {

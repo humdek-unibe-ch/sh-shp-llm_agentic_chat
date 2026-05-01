@@ -33,6 +33,60 @@ import { PersonaStrip } from './PersonaStrip';
 import { RunStatusBadge } from './RunStatusBadge';
 import { ThreadActions } from './ThreadActions';
 import { DebugEventPanel } from './DebugEventPanel';
+import { classifyChatError } from '../../utils/error-classify';
+
+/**
+ * Inline error surface shown above the input when a run fails.
+ *
+ * Some upstream errors are *recoverable only* by starting a new
+ * thread - notably OpenAI's "Response with id … not found" 404, which
+ * happens when the AG-UI agent's stored `previous_response_id` no
+ * longer exists on the OpenAI side (TTL expiry, store=False on a
+ * provider, or backend restart between turns). For those cases we
+ * promote the alert to a clearer call-to-action with a one-click
+ * reset button instead of dumping the raw stack trace at the user.
+ */
+const ChatErrorBanner: React.FC<{
+  message: string;
+  showReset: boolean;
+  resetLabel: string;
+  onReset: () => void;
+}> = ({ message, showReset, resetLabel, onReset }) => {
+  const classified = classifyChatError(message);
+  return (
+    <div className="agentic-chat__error alert alert-danger py-2 mb-0" role="alert">
+      <div className="d-flex align-items-start">
+        <i className="fas fa-exclamation-circle mr-2 mt-1" aria-hidden="true" />
+        <div className="flex-grow-1">
+          <div className="font-weight-bold">{classified.title}</div>
+          <div className="small">{classified.body}</div>
+          {classified.detail && (
+            <details className="mt-1">
+              <summary className="small text-muted" style={{ cursor: 'pointer' }}>
+                Technical details
+              </summary>
+              <pre
+                className="small text-muted mb-0 mt-1"
+                style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+              >
+                {classified.detail}
+              </pre>
+            </details>
+          )}
+          {classified.suggestReset && showReset && (
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-danger mt-2"
+              onClick={onReset}
+            >
+              <i className="fas fa-redo mr-1" aria-hidden="true" /> {resetLabel}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 /** Props accepted by the ChatShell presentational component. */
 export interface ChatShellProps {
@@ -158,14 +212,17 @@ export const ChatShell: React.FC<ChatShellProps> = ({
           personas={personas}
           slotMap={slotMap}
           autoStartToken={autoStartToken}
+          isStreaming={isStreaming}
         />
       </div>
 
       {errorMessage && (
-        <div className="agentic-chat__error alert alert-danger py-2 mb-0" role="alert">
-          <i className="fas fa-exclamation-circle mr-2" aria-hidden="true" />
-          {errorMessage}
-        </div>
+        <ChatErrorBanner
+          message={errorMessage}
+          showReset={showReset}
+          resetLabel={labels.resetLabel}
+          onReset={onReset}
+        />
       )}
 
       <div className="agentic-chat__footer card-footer bg-white border-top">
