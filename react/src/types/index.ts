@@ -68,9 +68,20 @@ export interface AgenticChatConfig {
   showPersonaStrip: boolean;
   showRunStatus: boolean;
   personas: Persona[];
+  /**
+   * Backend slot -> persona key mapping resolved on the PHP side from the
+   * section's curated persona list. Read-only on the client; the PHP
+   * controller rebuilds it on every `start_thread` to keep CMS state and
+   * backend state in sync.
+   */
   personaSlotMap: PersonaSlotMap;
   backendSlots: string[];
+  /** Whether the microphone button should be rendered in the input. */
+  enableSpeechToText: boolean;
+  /** Whisper model identifier sent with each transcription request. */
+  speechToTextModel: string;
   labels: AgenticChatLabels;
+  /** Module / reflection text injected into every AG-UI thread. */
   moduleContent: string;
   backendInfo: BackendInfo;
 }

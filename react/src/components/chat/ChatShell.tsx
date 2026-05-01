@@ -1,7 +1,17 @@
 /**
- * ChatShell - presentational frame: header (title, status, actions), body
- * (persona strip + message list), footer (input or completion notice),
- * optional debug panel.
+ * ChatShell
+ * =========
+ *
+ * Presentational frame for the agentic chat. Mirrors the visual layout
+ * of the base `sh-shp-llm` chat: a Bootstrap card with a sticky header
+ * (title, status badge, primary actions), a scrolling body (persona
+ * strip + message list), an optional completion banner, and a footer
+ * containing the input bar (or a completion notice).
+ *
+ * The shell is purely visual; data, hooks and side-effects live in
+ * `AgenticChatApp`.
+ *
+ * @module components/chat/ChatShell
  */
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -24,6 +34,7 @@ import { RunStatusBadge } from './RunStatusBadge';
 import { ThreadActions } from './ThreadActions';
 import { DebugEventPanel } from './DebugEventPanel';
 
+/** Props accepted by the ChatShell presentational component. */
 export interface ChatShellProps {
   labels: AgenticChatLabels;
   personas: Persona[];
@@ -42,6 +53,13 @@ export interface ChatShellProps {
   showDebug: boolean;
   events: AgUiEvent[];
   autoStartToken: string;
+
+  /* Speech-to-text wiring (forwarded to MessageInput). */
+  enableSpeechToText: boolean;
+  speechToTextModel: string;
+  sectionId: number;
+  controllerUrl: string;
+
   onSend: (text: string) => void;
   onStart: () => void;
   onReset: () => void;
@@ -65,6 +83,10 @@ export const ChatShell: React.FC<ChatShellProps> = ({
   showDebug,
   events,
   autoStartToken,
+  enableSpeechToText,
+  speechToTextModel,
+  sectionId,
+  controllerUrl,
   onSend,
   onStart,
   onReset,
@@ -72,10 +94,21 @@ export const ChatShell: React.FC<ChatShellProps> = ({
   const inputDisabled = isStreaming || caseClosed || status === 'starting';
 
   return (
-    <section className="agentic-chat">
-      <header className="agentic-chat__header">
+    <section className="agentic-chat card border-0 shadow-sm">
+      <header className="agentic-chat__header card-header bg-white border-bottom">
         <div className="agentic-chat__title-row">
-          <h3 className="agentic-chat__title">{labels.title}</h3>
+          <div className="d-flex align-items-center" style={{ minWidth: 0, flex: 1 }}>
+            <div
+              className="bg-primary rounded-circle d-flex align-items-center justify-content-center mr-3 flex-shrink-0"
+              style={{ width: '40px', height: '40px' }}
+              aria-hidden="true"
+            >
+              <i className="fas fa-robot text-white" />
+            </div>
+            {labels.title && (
+              <h5 className="agentic-chat__title mb-0 text-truncate">{labels.title}</h5>
+            )}
+          </div>
           {showRunStatus && (
             <RunStatusBadge
               status={status}
@@ -97,15 +130,17 @@ export const ChatShell: React.FC<ChatShellProps> = ({
             </ReactMarkdown>
           </div>
         )}
-        <ThreadActions
-          startLabel={labels.startLabel}
-          resetLabel={labels.resetLabel}
-          showStart={showStart}
-          showReset={showReset}
-          disabled={isStreaming}
-          onStart={onStart}
-          onReset={onReset}
-        />
+        {(showStart || showReset) && (
+          <ThreadActions
+            startLabel={labels.startLabel}
+            resetLabel={labels.resetLabel}
+            showStart={showStart}
+            showReset={showReset}
+            disabled={isStreaming}
+            onStart={onStart}
+            onReset={onReset}
+          />
+        )}
       </header>
 
       {showPersonaStrip && (
@@ -116,43 +151,52 @@ export const ChatShell: React.FC<ChatShellProps> = ({
         />
       )}
 
-      <MessageList
-        messages={messages}
-        inFlight={inFlight}
-        personas={personas}
-        slotMap={slotMap}
-        autoStartToken={autoStartToken}
-      />
+      <div className="agentic-chat__body card-body p-0 d-flex flex-column">
+        <MessageList
+          messages={messages}
+          inFlight={inFlight}
+          personas={personas}
+          slotMap={slotMap}
+          autoStartToken={autoStartToken}
+        />
+      </div>
 
       {errorMessage && (
-        <div className="agentic-chat__error alert alert-danger" role="alert">
+        <div className="agentic-chat__error alert alert-danger py-2 mb-0" role="alert">
+          <i className="fas fa-exclamation-circle mr-2" aria-hidden="true" />
           {errorMessage}
         </div>
       )}
 
-      {caseClosed ? (
-        <div className="agentic-chat__completion alert alert-success">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-            {labels.completionMessage || 'This thread is complete.'}
-          </ReactMarkdown>
-          {showReset && (
-            <button
-              type="button"
-              className="btn btn-primary btn-sm mt-2"
-              onClick={onReset}
-            >
-              {labels.resetLabel}
-            </button>
-          )}
-        </div>
-      ) : (
-        <MessageInput
-          placeholder={labels.placeholder}
-          sendLabel={labels.sendLabel}
-          disabled={inputDisabled}
-          onSend={onSend}
-        />
-      )}
+      <div className="agentic-chat__footer card-footer bg-white border-top">
+        {caseClosed ? (
+          <div className="agentic-chat__completion alert alert-success mb-0">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+              {labels.completionMessage || 'This thread is complete.'}
+            </ReactMarkdown>
+            {showReset && (
+              <button
+                type="button"
+                className="btn btn-primary btn-sm mt-2"
+                onClick={onReset}
+              >
+                <i className="fas fa-redo mr-1" aria-hidden="true" /> {labels.resetLabel}
+              </button>
+            )}
+          </div>
+        ) : (
+          <MessageInput
+            placeholder={labels.placeholder}
+            sendLabel={labels.sendLabel}
+            disabled={inputDisabled}
+            onSend={onSend}
+            enableSpeechToText={enableSpeechToText}
+            speechToTextModel={speechToTextModel}
+            sectionId={sectionId}
+            controllerUrl={controllerUrl}
+          />
+        )}
+      </div>
 
       {showDebug && <DebugEventPanel events={events} />}
     </section>

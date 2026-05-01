@@ -1,18 +1,29 @@
-/* Agentic Chat - frontend styles */
+/* ============================================================================
+ * Agentic Chat — frontend styles
+ *
+ * The styles deliberately mirror the visual language of `sh-shp-llm`'s
+ * `LlmChat.css`: Bootstrap card surface, soft shadow, blue avatar bubble,
+ * rounded message bubbles with subtle borders. Class names are scoped
+ * with the `agentic-` prefix so the agentic chat can coexist with the
+ * standard LLM chat on the same page.
+ * ========================================================================== */
 
 .agentic-chat-root {
   width: 100%;
 }
+
+/* Card container ---------------------------------------------------------- */
 
 .agentic-chat {
   display: flex;
   flex-direction: column;
   background: #ffffff;
   border: 1px solid #e3e6ea;
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  border-radius: 0.5rem;
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.04);
   overflow: hidden;
   font-family: inherit;
+  min-height: 32rem;
 }
 
 .agentic-chat--loading {
@@ -25,12 +36,10 @@
   padding: 1rem;
 }
 
-/* Header --------------------------------------------------------------- */
+/* Header ------------------------------------------------------------------ */
 
 .agentic-chat__header {
   padding: 0.75rem 1rem;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e3e6ea;
 }
 
 .agentic-chat__title-row {
@@ -50,7 +59,7 @@
 .agentic-chat__description {
   font-size: 0.875rem;
   color: #4a5568;
-  margin-top: 0.25rem;
+  margin-top: 0.5rem;
 }
 
 .agentic-chat__description p:last-child {
@@ -63,7 +72,7 @@
   margin-top: 0.5rem;
 }
 
-/* Status badge --------------------------------------------------------- */
+/* Status badge ------------------------------------------------------------ */
 
 .agentic-status {
   display: inline-flex;
@@ -73,6 +82,7 @@
   border-radius: 999px;
   background: #e9ecef;
   color: #495057;
+  white-space: nowrap;
 }
 
 .agentic-status--running {
@@ -90,7 +100,7 @@
   color: #842029;
 }
 
-/* Persona strip -------------------------------------------------------- */
+/* Persona strip ----------------------------------------------------------- */
 
 .agentic-personas {
   display: flex;
@@ -145,18 +155,26 @@
   color: #2c3e50;
 }
 
-/* Scroller / messages -------------------------------------------------- */
+/* Body / scroller --------------------------------------------------------- */
+
+.agentic-chat__body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
 
 .agentic-chat__scroller {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
   padding: 1rem;
+  flex: 1 1 auto;
+  min-height: 18rem;
   max-height: 60vh;
-  min-height: 200px;
   overflow-y: auto;
   background: #ffffff;
 }
+
+/* Messages ---------------------------------------------------------------- */
 
 .agentic-msg {
   display: flex;
@@ -169,7 +187,7 @@
 }
 
 .agentic-msg--user .agentic-msg__body {
-  background: #0d6efd;
+  background: linear-gradient(135deg, #0d6efd 0%, #0b5ed7 100%);
   color: #fff;
   border-color: transparent;
 }
@@ -201,7 +219,8 @@
   background: #f1f3f5;
   border: 1px solid #e9ecef;
   border-radius: 0.6rem;
-  padding: 0.5rem 0.75rem;
+  padding: 0.55rem 0.85rem;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.02);
 }
 
 .agentic-msg__author {
@@ -221,10 +240,39 @@
 .agentic-msg__content > *:first-child { margin-top: 0; }
 .agentic-msg__content > *:last-child  { margin-bottom: 0; }
 
+.agentic-msg__content code {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+}
+
+.agentic-msg__content pre {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 0.375rem;
+  padding: 0.5rem;
+  font-size: 0.85rem;
+  overflow-x: auto;
+}
+
+.agentic-msg__content pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.agentic-msg--user .agentic-msg__content code {
+  background: rgba(255, 255, 255, 0.2);
+}
+
 .agentic-msg__timestamp {
   font-size: 0.7rem;
   color: #adb5bd;
   margin-top: 0.25rem;
+}
+
+.agentic-msg--user .agentic-msg__timestamp {
+  color: rgba(255, 255, 255, 0.75);
 }
 
 .agentic-msg--streaming .agentic-msg__body::after {
@@ -242,35 +290,106 @@
   to { visibility: hidden; }
 }
 
-/* Input ---------------------------------------------------------------- */
+/* Footer / input bar ------------------------------------------------------ */
+
+.agentic-chat__footer {
+  padding: 0.75rem 1rem;
+}
 
 .agentic-input {
   display: flex;
+  flex-direction: column;
   gap: 0.5rem;
-  padding: 0.75rem;
-  border-top: 1px solid #e3e6ea;
-  background: #fafbfc;
+}
+
+.agentic-input__alert {
+  font-size: 0.875rem;
+}
+
+.agentic-input__shell {
+  border: 1px solid #ced4da;
+  border-radius: 0.4rem;
+  background: #fff;
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.agentic-input__shell:focus-within {
+  border-color: #80bdff;
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.15);
 }
 
 .agentic-input__textarea {
   resize: none;
-  min-height: 2.5rem;
+  min-height: 2.75rem;
+  max-height: 10rem;
   font-size: 0.95rem;
+  border-radius: 0;
+  background: transparent;
+}
+
+.agentic-input__textarea:focus {
+  box-shadow: none;
+  border-color: transparent;
+  background: transparent;
+}
+
+.agentic-input__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-top: 1px solid #f1f3f5;
+  background: #fafbfc;
+}
+
+.agentic-input__toolbar-left,
+.agentic-input__toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.agentic-input__toolbar-right {
+  margin-left: auto;
+}
+
+.agentic-input__count {
+  font-size: 0.75rem;
+}
+
+.agentic-input__btn {
+  min-width: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .agentic-input__send {
-  align-self: flex-end;
-  min-width: 4.5rem;
+  min-width: 2.5rem;
 }
 
-/* Errors / completion -------------------------------------------------- */
+.agentic-input__mic--recording {
+  animation: agentic-mic-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes agentic-mic-pulse {
+  from { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.4); }
+  to   { box-shadow: 0 0 0 0.4rem rgba(220, 53, 69, 0); }
+}
+
+/* Errors & completion ----------------------------------------------------- */
 
 .agentic-chat__error,
 .agentic-chat__completion {
-  margin: 0.75rem 1rem;
+  margin: 0;
 }
 
-/* Debug panel ---------------------------------------------------------- */
+.agentic-chat__error {
+  border-radius: 0;
+}
+
+/* Debug panel ------------------------------------------------------------- */
 
 .agentic-debug {
   border-top: 1px dashed #dee2e6;
@@ -287,7 +406,7 @@
   background: #1e1e1e;
   color: #f8f9fa;
   padding: 0.5rem;
-  border-radius: 4px;
+  border-radius: 0.25rem;
 }
 
 .agentic-debug__item {
@@ -296,10 +415,11 @@
   word-break: break-word;
 }
 
-/* Responsive ---------------------------------------------------------- */
+/* Responsive -------------------------------------------------------------- */
 
 @media (max-width: 576px) {
   .agentic-chat__scroller { max-height: 50vh; }
   .agentic-msg__body { max-width: 92%; }
   .agentic-personas { padding: 0.4rem; }
+  .agentic-input__count { display: none; }
 }

@@ -149,8 +149,11 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
             return null;
         }
 
+        // NB: `llmMessages` exposes its row time as `timestamp` (not
+        // `created_at`); the threads viewer presents it under the canonical
+        // `created_at` alias for symmetry with conversations/threads rows.
         $messages = $this->db->query_db(
-            "SELECT id, role, content, sent_context, created_at, is_validated
+            "SELECT id, role, content, sent_context, `timestamp` AS created_at, is_validated
                FROM llmMessages
               WHERE id_llmConversations = ? AND deleted = 0
            ORDER BY id ASC

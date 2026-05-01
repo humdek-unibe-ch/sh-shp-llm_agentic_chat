@@ -7,37 +7,48 @@
 require_once __DIR__ . "/../../../../../../component/BaseController.php";
 require_once __DIR__ . "/../../AgenticChatJsonResponseTrait.php";
 require_once __DIR__ . "/../../../service/AgenticChatService.php";
+require_once __DIR__ . "/../../../../../sh-shp-llm/server/service/LlmSpeechToTextService.php";
 
 /**
- * Controller for the agenticChat style.
+ * Controller for the `agenticChat` CMS style.
  *
- * Same-origin request surface used by the React chat:
+ * Same-origin request surface consumed by the React chat:
  *
- *   GET  ?action=get_config         &section_id=...
- *   GET  ?action=get_thread         &section_id=...
- *   POST  action=start_thread        section_id=...
- *   POST  action=stream_run          section_id=...   (returns text/event-stream)
- *   POST  action=reset_thread        section_id=...
+ *   GET  ?action=get_config        &section_id=...
+ *   GET  ?action=get_thread        &section_id=...
+ *   POST  action=start_thread       section_id=...
+ *   POST  action=stream_run         section_id=...    (returns text/event-stream)
+ *   POST  action=reset_thread       section_id=...
+ *   POST  action=speech_transcribe  section_id=...    (multipart/form-data with `audio`)
  *
- * Section-id validation mirrors LlmChatController so multiple instances
- * on the same page coexist cleanly.
+ * Section-id validation mirrors LlmChatController so multiple instances of
+ * the style coexist on the same page without trampling each other.
+ *
+ * @package LLM Agentic Chat Plugin
  */
 class AgenticChatController extends BaseController
 {
     use AgenticChatJsonResponseTrait;
 
-    /** @var AgenticChatService */
+    /** @var AgenticChatService Shared with the model to avoid duplicate instantiation. */
     private $service;
 
-    /** @var string|null */
+    /** @var LlmSpeechToTextService|null Lazily instantiated when speech actions fire. */
+    private $speechService = null;
+
+    /** @var string|null Action currently being processed (for diagnostics). */
     private $currentAction = null;
+
+    /* =========================================================================
+     * CONSTRUCTOR
+     * ========================================================================= */
 
     public function __construct($model)
     {
         parent::__construct($model);
 
         if (!$this->isRequestForThisSection()) {
-            return; // Another instance handles this request.
+            return; // Another agenticChat instance on the page handles this.
         }
         $router = $model->get_services()->get_router();
         if ($router && isset($router->current_keyword) && $router->current_keyword === 'admin') {
@@ -48,6 +59,10 @@ class AgenticChatController extends BaseController
 
         $this->dispatch();
     }
+
+    /* =========================================================================
+     * REQUEST GATING / DISPATCH
+     * ========================================================================= */
 
     /**
      * Filter requests so each agenticChat instance only handles its own.
@@ -67,9 +82,10 @@ class AgenticChatController extends BaseController
         return (int) $requested === (int) $modelSectionId;
     }
 
-    /** Dispatch the matching action handler. */
+    /** Route the incoming request to the matching action handler. */
     private function dispatch()
     {
+        // Mobile-rendering bootstrap (no action) - skip so the view runs.
         if (isset($_POST['mobile']) && $_POST['mobile'] && !isset($_POST['action']) && !isset($_GET['action'])) {
             return;
         }
@@ -104,6 +120,9 @@ class AgenticChatController extends BaseController
                 case 'reset_thread':
                     $this->actionResetThread($userId);
                     break;
+                case 'speech_transcribe':
+                    $this->actionSpeechTranscribe($userId);
+                    break;
                 default:
                     $this->sendJsonResponse(['error' => 'Unknown action: ' . $action], 400);
             }
@@ -113,9 +132,11 @@ class AgenticChatController extends BaseController
         }
     }
 
-    /* Action Handlers ********************************************************/
+    /* =========================================================================
+     * ACTION HANDLERS
+     * ========================================================================= */
 
-    /** Return the React-config snapshot (same as data-config but live). */
+    /** Return the React-config snapshot (mirrors data-config but live). */
     private function actionGetConfig($userId)
     {
         $config = $this->model->getReactConfig();
@@ -131,28 +152,19 @@ class AgenticChatController extends BaseController
     }
 
     /**
-     * Configure the active thread on the backend (idempotent). Fails gracefully
-     * if no slot map is provided - we'll fall back to the section's defaults.
+     * Configure the active thread on the backend (idempotent).
+     *
+     * The persona slot map is rebuilt from the section configuration on
+     * the server side - the React frontend is not allowed to override it.
+     * Module content is always read from the global plugin configuration.
      */
     private function actionStartThread($userId)
     {
         $sectionId = $this->model->getSectionId();
         $thread = $this->service->getOrCreateThread($userId, $sectionId);
 
-        $slotMap = $this->model->getPersonaSlotMap();
-        if (isset($_POST['persona_slot_map'])) {
-            $decoded = json_decode((string) $_POST['persona_slot_map'], true);
-            if (is_array($decoded)) {
-                $slotMap = $decoded;
-            }
-        }
-
-        $moduleContent = $this->model->getModuleContent();
-        if (isset($_POST['module_content'])) {
-            $moduleContent = (string) $_POST['module_content'];
-        }
-
-        $result = $this->service->configureThread($thread, $slotMap, $moduleContent);
+        $slotMap = $this->model->buildBackendSlotMap();
+        $result = $this->service->configureThread($thread, $slotMap);
 
         $thread = $this->service->getThreadService()->getThreadById($thread['id']);
 
@@ -168,8 +180,8 @@ class AgenticChatController extends BaseController
      *
      * Request body fields:
      *   - section_id (already validated)
-     *   - message       string            user input or auto-start token
-     *   - resume        json (optional)   AG-UI resume payload
+     *   - message    string            user input or auto-start token
+     *   - resume     json (optional)   AG-UI resume payload
      */
     private function actionStreamRun($userId)
     {
@@ -224,7 +236,7 @@ class AgenticChatController extends BaseController
         exit;
     }
 
-    /** Mark current thread complete and create a fresh one. */
+    /** Mark the current thread complete and create a fresh one. */
     private function actionResetThread($userId)
     {
         $sectionId = $this->model->getSectionId();
@@ -235,7 +247,101 @@ class AgenticChatController extends BaseController
         ]);
     }
 
-    /* Helpers ****************************************************************/
+    /**
+     * Transcribe an uploaded audio blob via the Whisper model configured
+     * on this section. The plugin reuses sh-shp-llm's LlmSpeechToTextService
+     * so audio file naming / language detection / cURL handling stay
+     * consistent across both chat surfaces.
+     *
+     * Request body (multipart/form-data):
+     *   - section_id (already validated)
+     *   - audio      file              compressed audio recording
+     */
+    private function actionSpeechTranscribe($userId)
+    {
+        if (!$this->model->isSpeechToTextEnabled()) {
+            $this->sendJsonResponse([
+                'success' => false,
+                'error'   => 'Speech-to-text is not enabled for this chat.',
+            ], 400);
+            return;
+        }
+
+        $speechModel = $this->model->getSpeechToTextModel();
+        if ($speechModel === '') {
+            $this->sendJsonResponse([
+                'success' => false,
+                'error'   => 'No speech-to-text model configured.',
+            ], 400);
+            return;
+        }
+
+        if (!isset($_FILES['audio']) || $_FILES['audio']['error'] !== UPLOAD_ERR_OK) {
+            $uploadError = $_FILES['audio']['error'] ?? 'No file';
+            $this->sendJsonResponse([
+                'success' => false,
+                'error'   => 'No audio file provided or upload failed (error: ' . $uploadError . ').',
+            ], 400);
+            return;
+        }
+
+        $audioFile = $_FILES['audio'];
+        if (defined('LLM_MAX_AUDIO_SIZE') && $audioFile['size'] > LLM_MAX_AUDIO_SIZE) {
+            $this->sendJsonResponse([
+                'success' => false,
+                'error'   => 'Audio file too large. Maximum size is 25MB.',
+            ], 400);
+            return;
+        }
+
+        $speech = $this->getSpeechService();
+        $mimeType = $audioFile['type'] ?? '';
+        if (!$speech->isValidAudioType($mimeType)) {
+            $this->sendJsonResponse([
+                'success' => false,
+                'error'   => 'Invalid audio format. Supported: WebM/Opus, OGG/Opus, M4A/MP4, MP3, FLAC.',
+            ], 400);
+            return;
+        }
+
+        try {
+            $sectionId = $this->model->getSectionId();
+            $thread = $this->service->getOrCreateThread($userId, $sectionId);
+            $conversationId = (int) ($thread['id_llmConversations'] ?? 0) ?: null;
+            $language = $speech->getUserLanguage();
+
+            $result = $speech->saveAndTranscribeAudio(
+                $audioFile,
+                $userId,
+                $sectionId,
+                $conversationId,
+                $speechModel,
+                $language,
+                true
+            );
+
+            $this->sendJsonResponse($result);
+        } catch (Throwable $e) {
+            error_log('[AgenticChatController::speech_transcribe] ' . $e->getMessage());
+            $this->sendJsonResponse([
+                'success' => false,
+                'error'   => 'Speech transcription failed: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /* =========================================================================
+     * HELPERS
+     * ========================================================================= */
+
+    /** @return LlmSpeechToTextService */
+    private function getSpeechService()
+    {
+        if ($this->speechService === null) {
+            $this->speechService = new LlmSpeechToTextService($this->model->get_services());
+        }
+        return $this->speechService;
+    }
 
     /**
      * Resolve the active thread + visible messages for the React UI.
@@ -249,7 +355,7 @@ class AgenticChatController extends BaseController
         $thread = $this->service->getThreadService()->getActiveThreadForUser($userId, $sectionId);
         if (!$thread) {
             return [
-                'thread' => null,
+                'thread'   => null,
                 'messages' => [],
             ];
         }
@@ -257,7 +363,7 @@ class AgenticChatController extends BaseController
     }
 
     /**
-     * Project a thread row + its messages into a React-friendly shape.
+     * Project a thread row + its messages into the React-friendly shape.
      *
      * @param array $thread
      * @param int   $userId
@@ -267,7 +373,7 @@ class AgenticChatController extends BaseController
     {
         $db = $this->model->get_services()->get_db();
         $rawMessages = $db->query_db(
-            "SELECT id, role, content, sent_context, created_at
+            "SELECT id, role, content, sent_context, `timestamp`
                FROM llmMessages
               WHERE id_llmConversations = ?
                 AND deleted = 0
@@ -275,18 +381,18 @@ class AgenticChatController extends BaseController
             [(int) $thread['id_llmConversations']]
         ) ?: [];
 
-        $messages = array_map(function ($row) {
+        $messages = array_map(static function ($row) {
             $sentContext = null;
             if (!empty($row['sent_context'])) {
                 $decoded = json_decode((string) $row['sent_context'], true);
                 $sentContext = is_array($decoded) ? $decoded : null;
             }
             return [
-                'id' => (int) $row['id'],
-                'role' => $row['role'],
-                'content' => $row['content'],
-                'context' => $sentContext,
-                'created_at' => $row['created_at'],
+                'id'         => (int) $row['id'],
+                'role'       => $row['role'],
+                'content'    => $row['content'],
+                'context'    => $sentContext,
+                'created_at' => $row['timestamp'] ?? null,
             ];
         }, $rawMessages);
 
@@ -296,20 +402,20 @@ class AgenticChatController extends BaseController
 
         return [
             'thread' => [
-                'id' => (int) $thread['id'],
-                'aguiThreadId' => $thread['agui_thread_id'],
-                'lastRunId' => $thread['last_run_id'] ?? null,
-                'status' => $thread['status'],
-                'isCompleted' => (int) ($thread['is_completed'] ?? 0) === 1,
-                'lastError' => $thread['last_error'] ?? null,
-                'personaSlotMap' => is_array($slotMap) ? $slotMap : new stdClass(),
-                'moduleContent' => $thread['module_content'] ?? null,
-                'usage' => [
-                    'input' => isset($thread['usage_input_tokens']) ? (int) $thread['usage_input_tokens'] : null,
+                'id'              => (int) $thread['id'],
+                'aguiThreadId'    => $thread['agui_thread_id'],
+                'lastRunId'       => $thread['last_run_id'] ?? null,
+                'status'          => $thread['status'],
+                'isCompleted'     => (int) ($thread['is_completed'] ?? 0) === 1,
+                'lastError'       => $thread['last_error'] ?? null,
+                'personaSlotMap'  => is_array($slotMap) ? $slotMap : new stdClass(),
+                'moduleContent'   => $thread['module_content'] ?? null,
+                'usage'           => [
+                    'input'  => isset($thread['usage_input_tokens'])  ? (int) $thread['usage_input_tokens']  : null,
                     'output' => isset($thread['usage_output_tokens']) ? (int) $thread['usage_output_tokens'] : null,
-                    'total' => isset($thread['usage_total_tokens']) ? (int) $thread['usage_total_tokens'] : null,
+                    'total'  => isset($thread['usage_total_tokens'])  ? (int) $thread['usage_total_tokens']  : null,
                 ],
-                'conversationId' => (int) $thread['id_llmConversations'],
+                'conversationId'  => (int) $thread['id_llmConversations'],
             ],
             'messages' => $messages,
         ];

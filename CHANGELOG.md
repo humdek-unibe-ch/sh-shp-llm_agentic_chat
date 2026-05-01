@@ -4,7 +4,7 @@ All notable changes to the **sh-shp-llm_agentic_chat** plugin are documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2026-04-30
+## [1.0.0] - 2026-05-01
 
 ### Fixed
 - `?action=health_check` and `?action=fetch_defaults` no longer fail with cURL
@@ -94,7 +94,47 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the standard `debug` field.
 - Added default persona avatar assets under `assets/avatars/`.
 - Hooks `agentic-execute-task` (placeholder), `field-agentic_chat_personas-edit/view`,
-  and `field-agentic_chat_panel-edit/view` for CMS integration.
+  `field-agentic_chat_panel-edit/view`, and
+  `field-agentic-chat-personas-select-edit/view` for CMS integration.
+- **Curated persona multi-select for sections.** Custom field type
+  `agentic-chat-personas-select` and section-level field
+  `agentic_chat_personas_to_use` (CSV string of persona keys; the
+  underlying `<select multiple>` posts as an array which the core
+  `CmsUpdateController` implodes with commas before persistence).
+  The CMS hooks `field-agentic-chat-personas-select-edit/view` (handler
+  `AgenticChatHooks::outputFieldPersonasSelectEdit/View`) render a
+  Bootstrap multi-select pre-populated with every persona defined on
+  the global plugin admin page; editors pick personas by name. The
+  backend slot map sent to AG-UI (`mediator` /
+  `foundational_instructions` / `inclusive_instructions` /
+  `inquiry_instructions`) is rebuilt at runtime by
+  `AgenticChatModel::buildBackendSlotMap()` based on each persona's
+  `role` and `key`, so admins never need to maintain a slot map by hand.
+- **Speech-to-text input.** Section-level fields `enable_speech_to_text`
+  (checkbox) and `speech_to_text_model` (`select-audio-model` dropdown,
+  registered by `sh-shp-llm`) are linked into the `agenticChat` style
+  with sensible defaults. When enabled, a microphone button appears in
+  the message input bar; recordings are uploaded to the controller
+  action `?action=speech_transcribe` which delegates to
+  `LlmSpeechToTextService` from the base `sh-shp-llm` plugin (so MIME
+  validation, language detection and Whisper invocation stay
+  consistent across both chat surfaces). Client side, the new
+  `useSpeechToText` React hook drives the microphone with
+  auto-stop-on-silence (2s of silence below RMS 0.01) and a 60-second
+  hard limit.
+- **LLM-Chat-style input bar (`MessageInput`).** Auto-resizing
+  `<textarea>` with Enter-to-send / Shift+Enter newline, microphone
+  button (state-aware: idle / recording / processing), inline
+  character counter, clear button and submission spinner. Mirrors the
+  visual language of `sh-shp-llm`'s chat input without pulling in
+  `react-bootstrap` so the agentic UMD bundle stays small.
+- **Card-based chat surface (`ChatShell` + `AgenticChat.css`).**
+  Bootstrap card with sticky header (icon avatar, title, status
+  badge, Start/Reset actions), description markdown row, scrolling
+  body, completion banner and footer. Message bubbles use rounded
+  corners, soft shadows, gradient user bubbles, code-block styling, a
+  blinking-cursor streaming indicator and persona-coloured avatars
+  consistent with the LLM chat.
 - React entry points:
   - `agentic-chat.umd.js` for the front-end style.
   - `agentic-admin.umd.js` for the configuration admin page.

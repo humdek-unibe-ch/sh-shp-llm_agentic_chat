@@ -10,11 +10,17 @@
 --      (/admin/module_llm_agentic_chat) for global plugin configuration.
 --   3. Adds CMS field types and fields for backend URL, endpoint paths,
 --      timeout, default module content, and the global persona library.
---   4. Adds the `agenticChat` CMS style with section-level fields.
+--   4. Adds the `agenticChat` CMS style with its section-level fields,
+--      including a curated multi-select picker (custom field type
+--      `agentic-chat-personas-select`, field
+--      `agentic_chat_personas_to_use`) and the speech-to-text fields
+--      `enable_speech_to_text` / `speech_to_text_model` reused from
+--      `sh-shp-llm`.
 --   5. Creates the `agenticChatThreads` table linking llmConversations
 --      to AG-UI thread metadata.
 --   6. Registers transaction logging and persona-role lookups.
---   7. Registers hooks for the personas-editor field and admin panel.
+--   7. Registers hooks for the personas-editor field, the admin panel,
+--      and the section-level personas multi-select picker.
 -- =============================================================================
 
 START TRANSACTION;
@@ -208,12 +214,17 @@ VALUES (
 );
 
 
+-- -- Custom field type for the section-level "personas to use" multi-select.
+-- -- Rendered by the CMS hook `field-agentic-chat-personas-select-edit/view`
+-- -- (handler: AgenticChatHooks::outputFieldPersonasSelectEdit/View).
+INSERT IGNORE INTO `fieldType` (`id`, `name`, `position`)
+VALUES (NULL, 'agentic-chat-personas-select', '121');
+
 -- -- Style-specific fields.
 -- -- Internal (display=0): runtime / behaviour configuration.
 INSERT IGNORE INTO `fields` (`id`, `name`, `id_type`, `display`) VALUES
-(NULL, 'agentic_chat_persona_slot_map', get_field_type_id('json'), '0'),
-(NULL, 'agentic_chat_auto_start',       get_field_type_id('checkbox'), '0'),
-(NULL, 'agentic_chat_section_module',   get_field_type_id('textarea'), '0'),
+(NULL, 'agentic_chat_personas_to_use',   get_field_type_id('agentic-chat-personas-select'), '0'),
+(NULL, 'agentic_chat_auto_start',        get_field_type_id('checkbox'), '0'),
 (NULL, 'agentic_chat_show_persona_strip', get_field_type_id('checkbox'), '0'),
 (NULL, 'agentic_chat_show_run_status',    get_field_type_id('checkbox'), '0');
 
@@ -241,11 +252,15 @@ INSERT IGNORE INTO `styles_fields` (`id_styles`, `id_fields`, `default_value`, `
 (get_style_id('agenticChat'), get_field_id('data_config'), '',   'The field `dataConfig` allows to configure data sources for the component.'),
 
 -- internal
-(get_style_id('agenticChat'), get_field_id('agentic_chat_persona_slot_map'), '{"mediator":"mediator","foundational_instructions":"foundational_teacher","inclusive_instructions":"inclusive_teacher","inquiry_instructions":"inquiry_teacher"}', 'JSON object mapping backend slots to persona keys from the global persona library. Example: {"foundational_instructions":"foundational_teacher","inclusive_instructions":"inclusive_teacher","inquiry_instructions":"inquiry_teacher","mediator":"mediator"}'),
+(get_style_id('agenticChat'), get_field_id('agentic_chat_personas_to_use'), 'mediator,foundational_teacher,inclusive_teacher,inquiry_teacher', 'Pick which personas (defined in the global LLM Agentic Chat configuration page) take part in this section''s chat. The plugin maps each selected persona to a backend slot automatically using its role. Leave empty to use every enabled persona from the global library.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_auto_start'),       '1',   'When enabled, the chat sends the kickoff token __auto_start__ as soon as the user opens the section.'),
-(get_style_id('agenticChat'), get_field_id('agentic_chat_section_module'),   '',    'Module / reflection text for this section. Falls back to the plugin default if empty.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_show_persona_strip'), '1', 'Show the strip with active/visited persona avatars above the messages.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_show_run_status'),    '1', 'Show the small run-status badge in the chat header.'),
+
+-- internal: speech-to-text (fields registered by sh-shp-llm; we just link them
+-- and ship sensible defaults so the microphone button works out of the box).
+(get_style_id('agenticChat'), get_field_id('enable_speech_to_text'), '0', 'Enable speech-to-text input for this agentic chat. When enabled and an audio model is selected, a microphone button appears in the message input area. Audio is uploaded to the configured Whisper model and the transcribed text is appended to the textarea.'),
+(get_style_id('agenticChat'), get_field_id('speech_to_text_model'),  'faster-whisper-large-v3', 'Whisper model used for speech recognition. The microphone button only appears when speech-to-text is enabled above AND a model is selected.'),
 
 -- external (translatable)
 (get_style_id('agenticChat'), get_field_id('agentic_chat_title'),                  'Reflection chat',          'Heading shown above the chat.'),
@@ -332,9 +347,15 @@ VALUES
 -- 6) Hooks
 --
 --   - field-agentic_chat_personas-edit / -view
---       Render the React-powered persona editor instead of a JSON textarea.
+--       Render the React-powered persona editor instead of a JSON textarea
+--       (used on the global admin page, NOT on sections).
 --   - field-agentic_chat_panel-edit / -view
 --       Render the admin quick-links panel.
+--   - field-agentic-chat-personas-select-edit / -view
+--       Render a Bootstrap multi-select for the section-level field
+--       `agentic_chat_personas_to_use`. The dropdown is populated from
+--       the global persona library so editors pick personas by name
+--       rather than maintaining a JSON slot map by hand.
 -- -----------------------------------------------------------------------------
 INSERT IGNORE INTO `hooks` (`id_hookTypes`, `name`, `description`, `class`, `function`, `exec_class`, `exec_function`)
 VALUES (
@@ -378,6 +399,28 @@ VALUES (
     'create_field_item',
     'AgenticChatHooks',
     'outputFieldPanelView'
+);
+
+INSERT IGNORE INTO `hooks` (`id_hookTypes`, `name`, `description`, `class`, `function`, `exec_class`, `exec_function`)
+VALUES (
+    (SELECT id FROM lookups WHERE lookup_code = 'hook_overwrite_return' LIMIT 1),
+    'field-agentic-chat-personas-select-edit',
+    'Render the agentic-chat personas multi-select in CMS edit mode.',
+    'CmsView',
+    'create_field_form_item',
+    'AgenticChatHooks',
+    'outputFieldPersonasSelectEdit'
+);
+
+INSERT IGNORE INTO `hooks` (`id_hookTypes`, `name`, `description`, `class`, `function`, `exec_class`, `exec_function`)
+VALUES (
+    (SELECT id FROM lookups WHERE lookup_code = 'hook_overwrite_return' LIMIT 1),
+    'field-agentic-chat-personas-select-view',
+    'Render the agentic-chat personas multi-select in CMS view mode.',
+    'CmsView',
+    'create_field_item',
+    'AgenticChatHooks',
+    'outputFieldPersonasSelectView'
 );
 
 

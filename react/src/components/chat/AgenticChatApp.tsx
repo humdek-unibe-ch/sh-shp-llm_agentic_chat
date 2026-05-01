@@ -81,10 +81,9 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
 
   const startThread = useCallback(async () => {
     runStatus.beginStarting();
-    const startResult = await api.startThread({
-      persona_slot_map: config.personaSlotMap,
-      module_content: config.moduleContent,
-    });
+    // Slot map + module content are resolved server-side from the
+    // section/admin configuration, so we send no body fields here.
+    const startResult = await api.startThread();
     if (!startResult.ok) {
       runStatus.markError(startResult.error);
       return;
@@ -161,6 +160,10 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
       showDebug={config.showDebug}
       events={debugEvents}
       autoStartToken={config.autoStartToken}
+      enableSpeechToText={config.enableSpeechToText}
+      speechToTextModel={config.speechToTextModel}
+      sectionId={config.sectionId}
+      controllerUrl={config.controllerUrl}
       onSend={(text) => void sendMessage(text)}
       onStart={() => void startThread()}
       onReset={() => void resetThread()}

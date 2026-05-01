@@ -142,18 +142,20 @@ class AgenticChatService
     }
 
     /**
-     * Configure a thread on the backend by mapping the section's slot map
-     * + module content to a /reflect/configure payload.
+     * Configure a thread on the backend by mapping a slot map to a
+     * `/reflect/configure` payload. The module content is always sourced
+     * from the global configuration (since plugin v1.1.0).
      *
-     * @param array  $thread        Thread row from getOrCreateThread().
-     * @param array  $slotMap       Slot -> persona key mapping (decoded JSON).
-     * @param string $moduleContent Section module text (or empty to use the global default).
+     * @param array  $thread  Thread row from getOrCreateThread().
+     * @param array  $slotMap Backend slot -> persona key mapping
+     *                        (already resolved by the caller; usually
+     *                        AgenticChatModel::buildBackendSlotMap()).
      * @return array{ok:bool, status:int, data?:array, error?:string}
      */
-    public function configureThread(array $thread, array $slotMap, $moduleContent)
+    public function configureThread(array $thread, array $slotMap)
     {
         $cfg = $this->getGlobalConfig();
-        $module = $moduleContent !== '' ? (string) $moduleContent : (string) $cfg['default_module'];
+        $module = (string) $cfg['default_module'];
 
         $payload = $this->personaService->buildConfigurePayload(
             $cfg['personas'],
