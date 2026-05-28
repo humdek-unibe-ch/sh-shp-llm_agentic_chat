@@ -4,7 +4,249 @@ All notable changes to the **sh-shp-llm_agentic_chat** plugin are documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2026-05-01
+## [0.3.0] - 2026-05-28
+
+### Fixed
+- **Chat now actually talks to the live FoResTCHAT backend.** The upstream
+  `https://tpf-test.humdek.unibe.ch/forestBackend/` rewrote `/reflect/configure`
+  to use positional persona slots: it now requires
+  `persona_<N>_name` **and** `persona_<N>_instructions` for `N in 1..3` (the
+  old semantic-slot keys `foundational_instructions`, `inclusive_instructions`,
+  `inquiry_instructions` no longer exist). The plugin's configure builder
+  was still sending the old keys and omitting the names, so every
+  configure call returned `422 Validation Error` and the first
+  `/reflect` run died with "thread not configured". The configure
+  payload is now `{thread_id, module_content, persona_1_name,
+  persona_1_instructions, persona_2_name, persona_2_instructions,
+  persona_3_name, persona_3_instructions}` exactly as the backend's
+  `ReflectionConfigureRequest` Pydantic model requires, and the same
+  `agui_thread_id` is reused for every subsequent `/reflect` stream
+  so the conversation continues in place.
+- **Persona attribution restored after the backend renamed its agents.**
+  `HandoffBuilder` now names participants `persona_1_teacher`,
+  `persona_2_teacher`, `persona_3_teacher` (plus the fixed
+  `group_chat_mediator`). The plugin's executor → slot map still had
+  the old `foundational_teacher` / `inclusive_teacher` / `inquiry_teacher`
+  ids, so every assistant message was attributed to an unknown
+  executor and rendered with the generic "Assistant" avatar. The
+  normaliser now maps `persona_<N>_teacher` to the positional
+  `persona_<N>` slot and keeps the legacy executor ids as fallbacks
+  for older threads.
+- **Empty libraries no longer 422 the configure call.** The backend
+  enforces `minLength: 1` on `persona_<N>_name`, so sections whose
+  curated persona set leaves a slot unfilled were rejected outright.
+  `buildConfigurePayload()` now falls back to the labels in
+  `AGENTIC_CHAT_SLOT_DEFAULTS` (Teacher 1 / 2 / 3 with neutral
+  prompts) for any slot the admin hasn't authored a persona for, and
+  to a neutral module sentence when `agentic_chat_default_module` is
+  blank. The resulting workflow still runs end-to-end against the
+  live backend; the admin just gets generic teacher voices until they
+  finish authoring their library.
+
+### Changed
+- **Positional backend slots replace semantic backend slots.**
+  `AGENTIC_CHAT_BACKEND_SLOTS` is now
+  `[mediator, persona_1, persona_2, persona_3]`. Authoring stays
+  unchanged — admins keep tagging personas as `foundational` /
+  `inclusive` / `inquiry`; the plugin internally maps each slot type
+  onto the matching positional slot for the configure call and the
+  speaker-attribution lookup. The persona strip now shows friendly
+  "Teacher 1 / 2 / 3" labels for the positional slots in its tooltip.
+
+## [0.2.0] - 2026-05-19
+
+### Fixed
+- **Assistant messages now display the correct persona name + avatar
+  instead of a generic "Assistant" label.** The FoResTCHAT backend
+  emits `TEXT_MESSAGE_START` / `TEXT_MESSAGE_CONTENT` events without an
+  `author_name` field — the executor name is only available on the
+  surrounding `STEP_STARTED.stepName`. The PHP event normaliser is now
+  stateful for the lifetime of a single stream: it tracks the current
+  executor from each `STEP_STARTED` / `ACTIVITY_SNAPSHOT` event and
+  back-fills `authorName`, `sourceExecutorId`, `authorSlot` and
+  `authorPersonaKey` on every TEXT_MESSAGE_* and TOOL_CALL_* event that
+  did not carry them itself. Both the streaming in-flight bubble and
+  the persisted `llmMessages.sent_context` row now see the resolved
+  persona, so refreshing the page no longer loses speaker attribution.
+- **Pending-interrupt cards now identify the correct speaker.** The
+  legacy `RUN_FINISHED.interrupt[].value` payload buries the author
+  inside `agent_response.messages[i].author_name` (not at
+  `agent_response.author_name` as some older docs suggest).
+  `normalizeInterrupt()` now walks the messages list from the end and
+  picks up the most recent assistant author there. The
+  `currentExecutorId` fallback is only applied when neither the
+  top-level interrupt nor the agent_response messages name a speaker,
+  so the trailing silent `superstep:1` fan-out (whose last
+  `STEP_STARTED` is always `inquiry_teacher`) no longer mis-attributes
+  every mediator interrupt to the inquiry-teacher persona. The yellow
+  "Reply to continue" card now shows the mediator's name + avatar.
+- **Interrupt card no longer repeats the assistant message.** The
+  FoResTCHAT backend echoes the last assistant turn inside its
+  `HandoffAgentUserRequest` payload, which made the chat appear to
+  print the same paragraph twice (once as a normal bubble, once as
+  the card body). `InterruptPromptCard` now compares the interrupt
+  body against the most recent assistant message and suppresses it
+  when they match; the card is reduced to a small "Waiting for your
+  reply from &lt;persona&gt;" status hint sitting under the bubble.
+- **Streaming bubble no longer "flashes" into the persisted bubble.**
+  React previously keyed the in-flight streaming bubble as
+  `buf-<messageId>` and the finalised persisted bubble as
+  `id-<optimisticId>`. At TEXT_MESSAGE_END the in-flight key
+  disappeared and a brand-new optimistic key appeared, so React tore
+  the bubble down and rebuilt it from scratch — perceived by the
+  user as a brief reload glitch. Both branches now key on
+  `msg-<messageId>` (with `id-<optimisticId>` as the fallback for
+  rows that have no AG-UI message id, e.g. user input and historical
+  snapshots). React reconciles the same DOM node in place and only
+  updates the changed props (the typing class drops off, the
+  timestamp is added) so the transition is visually seamless.
+- **SSE streaming is no longer buffered by Apache.** `startSseStream`
+  now adds `Content-Encoding: identity`, opts out of `mod_deflate`
+  via `apache_setenv('no-gzip', '1')`, disables ini-level
+  `zlib.output_compression`, and emits a ~2KB SSE comment as initial
+  padding to overcome the default Chrome / Apache response-buffer
+  thresholds. Without these fences the React client only saw the
+  assembled `TEXT_MESSAGE_*` deltas after the upstream Python
+  workflow completed, so the chat appeared to print the entire reply
+  in one chunk; with them the deltas reach the browser as they are
+  produced and the bubble visibly types token-by-token.
+- **Resume turns no longer fail with "No pending requests found in
+  workflow context."** Upstream `set_thread_config()` calls
+  `clear_thread_workflow(thread_id)` on every invocation, which deletes
+  the in-memory workflow state for the thread — including any HITL
+  interrupts the backend is waiting on. The controller used to
+  reconfigure the thread before every `stream_run`, so on every resume
+  turn we wiped the interrupt id we had just persisted and the backend
+  immediately rejected the resume payload. Configuration now happens
+  exactly once per thread (in `actionStartThread`, and again when the
+  user explicitly resets the thread); subsequent `stream_run` calls
+  reuse the backend's existing workflow state. Backend restarts in the
+  middle of a conversation remain a known limitation: when the upstream
+  process is restarted, the user has to start a new thread to recover
+  custom personas/module text.
+
+### Breaking
+- **Persona data model simplified to match the Python backend.** The
+  Python reflection backend at `D:\TPF\SelfHelp\llm-forestchat-backend`
+  only supports three configurable teacher slots
+  (`foundational_instructions`, `inclusive_instructions`,
+  `inquiry_instructions`) plus a fixed, non-configurable mediator. The
+  plugin now mirrors that reality:
+  - `Persona.role` (mediator / teacher / expert / supporter / other) is
+    **removed**. Every persona must declare a `slot_type` of
+    `foundational`, `inclusive` or `inquiry` instead.
+  - `Persona.personality` is **removed**. The persona summary card now
+    previews the first sentence of `instructions` instead.
+  - `Persona.key` is now **hidden** from the admin editor and
+    auto-derived from the display name. Duplicates are suffixed
+    automatically by the PHP normaliser during save.
+  - The mediator persona is **no longer authored** through the admin
+    library. It lives as a fixed PHP constant
+    (`AGENTIC_CHAT_MEDIATOR_PERSONA` in `globals.php`) and is exposed
+    to the React chat as `AgenticChatConfig.mediator` for avatar/name
+    rendering only.
+  - `agenticChatPersonaRole` lookup rows and the matching PHP
+    constants are removed. Slot types are declared in `globals.php`
+    as `AGENTIC_CHAT_PERSONA_SLOT_TYPES`.
+  - Section selection now uses the persona's `slot_type` to map onto
+    backend slots directly. The legacy "role + key contains
+    foundational" heuristic in `AgenticChatModel::buildBackendSlotMap`
+    is gone.
+  - When a section selects more than one persona for the same slot,
+    the first one in selection order wins. When a section does not
+    select a persona for a slot, the plugin falls back to the first
+    enabled persona of that slot type in the global library.
+  - The default section-level `agentic_chat_personas_to_use` value is
+    now empty (i.e. "use global fallbacks").
+- Migration note: nothing is released yet, so the database can simply
+  be rebuilt from `server/db/v1.0.0.sql`. The persona normaliser is
+  forgiving with legacy JSON (unknown `slot_type` falls back to
+  `foundational`, `role`/`personality` are silently ignored).
+
+### Changed
+- **The plugin is now an AG-UI normalisation bridge.** The upstream
+  FoResTCHAT backend speaks an AG-UI-flavoured wire protocol with a few
+  inherited quirks (mixed snake/camel identifiers, singular
+  `RUN_FINISHED.interrupt` arrays, bespoke `handoff_input` interrupt
+  payloads, in-memory thread config that drifts on restart). The
+  backend cannot be modified, so the plugin now acts as a compatibility
+  layer: legacy on the upstream side, strict AG-UI on the React side.
+  - New PHP service `AgenticChatEventNormalizer` rewrites every event
+    leaving the bridge: identifier fields are camelCase only,
+    `RUN_FINISHED` carries an explicit `outcome` envelope
+    (`{ type: "interrupt", interrupts: [...] }` or
+    `{ type: "complete" }`), interrupts are flattened into the strict
+    `PendingInterrupt` shape (`interruptId`, `reason`, `message`,
+    `responseSchema`, `metadata`, `sourceExecutorId`,
+    `authorPersonaKey`, `rawLegacy`), and the original backend payload
+    is preserved under `_rawLegacy` for the debug surface.
+  - `AgenticChatService::streamRun()` now forwards **normalised**
+    events to the controller instead of raw cURL chunks. The
+    controller re-serialises each event as a single `data: <json>\n\n`
+    SSE block so React always sees clean framing regardless of how
+    cURL chunked the upstream bytes.
+  - Speaker metadata (`authorName`, `sourceExecutorId`, `authorSlot`,
+    `authorPersonaKey`, `messageId`, `runId`) is now persisted to
+    `llmMessages.sent_context` alongside the assistant text, so the
+    chat surface can resolve the correct avatar and display name from
+    the message itself rather than from transient handoff state. This
+    fixes a regression where a page refresh during an active
+    conversation would render every prior assistant message with the
+    default avatar.
+- **Resume payloads use the strict AG-UI shape end-to-end.** The React
+  chat now sends resumes as
+  `Array<{ interruptId, status: 'resolved' | 'cancelled', payload? }>`
+  and submits **every** open interrupt in one go (previously only the
+  most recent interrupt was resumed, which silently stranded older
+  pending interrupts on multi-pause workflows). The PHP bridge
+  translates the strict array back into the backend's legacy
+  `{ interrupts: [{ id, value }] }` payload via the new
+  `AgenticChatEventNormalizer::buildLegacyResumePayload()` helper. The
+  default builder turns `payload.text` into the canonical handoff_input
+  shape (`[{ role: "user", contents: [{ type: "text", text }] }]`) used
+  by the FoResTCHAT workflow; clients can override via
+  `payload.legacyValue` if they need a custom backend shape.
+
+### Added
+- **Rich interrupt prompt cards.** When a run pauses on a HITL
+  interrupt the chat body renders a normalised
+  `InterruptPromptCard` for every open interrupt, showing the
+  persona avatar, display name, prompt text (`PendingInterrupt.message`),
+  and reason badge (`handoff_input`, `approval`, …). Multiple
+  simultaneous interrupts are paginated with a "N of M" counter. In
+  debug mode each card also exposes the raw backend payload through a
+  collapsed `<details>` block.
+- **Backend thread is reconfigured before every run.** The upstream
+  backend stores its per-thread `ReflectionConfig` in process memory
+  only, so a backend restart between two turns previously caused the
+  conversation to silently fall back to the built-in defaults.
+  `AgenticChatController::actionStreamRun()` now calls
+  `/reflect/configure` on every `stream_run`, reusing the same local
+  `agui_thread_id`. The configure call is idempotent (no LLM traffic)
+  and guarantees the personas + module content the editor configured
+  remain in effect across restarts.
+
+### Security
+- **Streamed assistant Markdown no longer allows raw HTML.** The
+  `MessageBubble` component dropped the `rehype-raw` plugin from the
+  assistant rendering path so a malicious or hallucinated `<script>`
+  payload in an LLM response can no longer mount into the chat
+  surface. Admin-authored descriptive markdown in `ChatShell` (chat
+  header description, completion message) keeps `rehype-raw` because
+  the source there is trusted CMS content, not LLM output.
+
+### Notes
+- This release is fully backwards compatible at the database level —
+  the `agenticChatThreads` schema is unchanged. Older `pending_interrupts`
+  rows that still carry the legacy `{ id, value }` shape are coerced
+  into the strict `PendingInterrupt` shape on the fly by
+  `AgenticChatController::presentThread()`.
+- The strict resume body shape also accepts the legacy
+  `{ interrupts: [...] }` object for backward compatibility — older
+  React clients that still send the old shape continue to work
+  unchanged.
+
+## [0.1.0] - 2026-05-01
 
 ### Fixed
 - **Stable `agui_thread_id` across the conversation lifetime.** Every
