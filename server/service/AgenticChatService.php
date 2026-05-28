@@ -7,6 +7,7 @@ require_once __DIR__ . '/AgenticChatBackendClient.php';
 require_once __DIR__ . '/AgenticChatPersonaService.php';
 require_once __DIR__ . '/AgenticChatThreadService.php';
 require_once __DIR__ . '/AgenticChatEventNormalizer.php';
+require_once __DIR__ . '/AgenticChatTranscriptLogger.php';
 
 /**
  * High-level orchestrator for agentic chat sessions.
@@ -40,6 +41,9 @@ class AgenticChatService
     /** @var AgenticChatEventNormalizer */
     private $normalizer;
 
+    /** @var AgenticChatTranscriptLogger */
+    private $transcriptLogger;
+
     /** @var array<string,string|null>|null Cached config from sh_module_llm_agentic_chat. */
     private $configCache;
 
@@ -50,6 +54,13 @@ class AgenticChatService
         $this->personaService = new AgenticChatPersonaService();
         $this->threadService = new AgenticChatThreadService($services);
         $this->normalizer = new AgenticChatEventNormalizer();
+        $this->transcriptLogger = new AgenticChatTranscriptLogger();
+    }
+
+    /** @return AgenticChatTranscriptLogger */
+    public function getTranscriptLogger()
+    {
+        return $this->transcriptLogger;
     }
 
     /** @return AgenticChatEventNormalizer */
@@ -315,6 +326,12 @@ class AgenticChatService
         $lastError = null;
         $pendingInterrupts = [];   // normalised interrupts captured from RUN_FINISHED.outcome
         $awaitingInput = false;
+        // SHA-1 hashes of texts already written to the transcript log by
+        // TEXT_MESSAGE_END so the subsequent RUN_FINISHED.interrupt log
+        // call does not duplicate the same speaker turn (the FoResTCHAT
+        // backend mirrors the last assistant message inside the
+        // interrupt's agent_response payload).
+        $loggedTextHashes = [];
         $service = $this; // avoid PHP <7.4 "$this in static closure" pitfalls
         $threadRef = $thread;
         $normalizer = $this->normalizer;
@@ -326,10 +343,12 @@ class AgenticChatService
         // llmMessages, e.g. "Hello!'m glad" instead of "Hello! I'm glad").
         $sseBuffer = '';
 
+        $transcriptLogger = $this->transcriptLogger;
         $sseHandler = function (string $rawChunk) use (
             &$assistantBuffers, &$caseClosed, &$usage, &$lastError,
-            &$pendingInterrupts, &$awaitingInput, &$sseBuffer,
-            $threadRef, $service, $onNormalisedEvent, $normalizer, $slotMap
+            &$pendingInterrupts, &$awaitingInput, &$sseBuffer, &$loggedTextHashes,
+            $threadRef, $service, $onNormalisedEvent, $normalizer, $slotMap,
+            $transcriptLogger
         ) {
             // Parse the chunk into complete events. parseSseChunk is
             // stateful via $sseBuffer: it returns only complete events
@@ -399,6 +418,19 @@ class AgenticChatService
                             $buffer['text'],
                             $context
                         );
+                        // Mirror the finalised assistant message into the
+                        // per-persona transcript log so the dev/admin can
+                        // copy-paste the conversation flow.
+                        $transcriptLogger->logMessage(
+                            $threadRef,
+                            [
+                                'authorName'       => $buffer['authorName'],
+                                'authorSlot'       => $buffer['authorSlot'],
+                                'authorPersonaKey' => $buffer['authorPersonaKey'],
+                            ],
+                            $buffer['text']
+                        );
+                        $loggedTextHashes[sha1(trim($buffer['text']))] = true;
                         if ($service->isCaseCompleteText($buffer['text'])) {
                             $caseClosed = true;
                         }
@@ -414,6 +446,27 @@ class AgenticChatService
                                 continue;
                             }
                             $pendingInterrupts[] = $interrupt;
+                            // Log interrupts only when their text was NOT
+                            // already streamed via TEXT_MESSAGE_END earlier
+                            // in this run. The FoResTCHAT backend always
+                            // mirrors the last assistant message inside the
+                            // interrupt's agent_response payload, which
+                            // would otherwise produce a duplicate transcript
+                            // entry for every mediator turn.
+                            $interruptMessage = isset($interrupt['message']) ? (string) $interrupt['message'] : '';
+                            $interruptHash = $interruptMessage !== '' ? sha1(trim($interruptMessage)) : '';
+                            if ($interruptMessage !== '' && !isset($loggedTextHashes[$interruptHash])) {
+                                $transcriptLogger->logInterrupt(
+                                    $threadRef,
+                                    [
+                                        'authorName'       => $interrupt['authorName'] ?? null,
+                                        'authorSlot'       => $interrupt['authorSlot'] ?? null,
+                                        'authorPersonaKey' => $interrupt['authorPersonaKey'] ?? null,
+                                    ],
+                                    $interruptMessage
+                                );
+                                $loggedTextHashes[$interruptHash] = true;
+                            }
                         }
                         $awaitingInput = !empty($pendingInterrupts);
                     }
