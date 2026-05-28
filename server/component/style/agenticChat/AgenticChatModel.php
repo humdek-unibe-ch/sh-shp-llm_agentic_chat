@@ -259,13 +259,28 @@ class AgenticChatModel extends StyleModel
 
     /**
      * Module / reflection text injected into every AG-UI thread for this
-     * section. Always read from the global configuration field
-     * `agentic_chat_default_module`; sections do not override it.
+     * section as `module_content`.
+     *
+     * Resolution order (first non-empty wins):
+     *   1. Section-level `agentic_chat_context` (translatable markdown).
+     *      Mirrors the LLM plugin's `conversation_context` pattern so
+     *      authors can tailor the reflection prompt per CMS section.
+     *   2. Global `agentic_chat_default_module` from the admin page
+     *      (`sh_module_llm_agentic_chat`), used as a shared fallback.
+     *
+     * Variable interpolation (`{{field_name}}`) is applied by the
+     * StyleModel base class before the value is returned here, so
+     * authors can reference data sources the same way they do in the
+     * LLM plugin's chat style.
      *
      * @return string
      */
     public function getModuleContent()
     {
+        $sectionContext = trim((string) $this->get_db_field('agentic_chat_context', ''));
+        if ($sectionContext !== '') {
+            return $sectionContext;
+        }
         return (string) $this->agenticService->getGlobalConfig()['default_module'];
     }
 

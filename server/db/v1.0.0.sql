@@ -234,6 +234,7 @@ INSERT IGNORE INTO `fields` (`id`, `name`, `id_type`, `display`) VALUES
 INSERT IGNORE INTO `fields` (`id`, `name`, `id_type`, `display`) VALUES
 (NULL, 'agentic_chat_title',                  get_field_type_id('text'),     '1'),
 (NULL, 'agentic_chat_description',            get_field_type_id('markdown-inline'), '1'),
+(NULL, 'agentic_chat_context',                get_field_type_id('markdown'), '1'),
 (NULL, 'agentic_chat_message_placeholder',    get_field_type_id('text'),     '1'),
 (NULL, 'agentic_chat_send_label',             get_field_type_id('text'),     '1'),
 (NULL, 'agentic_chat_start_label',            get_field_type_id('text'),     '1'),
@@ -267,6 +268,7 @@ INSERT IGNORE INTO `styles_fields` (`id_styles`, `id_fields`, `default_value`, `
 -- external (translatable)
 (get_style_id('agenticChat'), get_field_id('agentic_chat_title'),                  'Reflection chat',          'Heading shown above the chat.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_description'),            '',                          'Optional markdown description rendered between the heading and the chat.'),
+(get_style_id('agenticChat'), get_field_id('agentic_chat_context'),                '',                          'Reflection module text injected into every AG-UI thread for this section as `module_content`. Supports markdown / plain text. When set, this overrides the global default module content from the admin page (`agentic_chat_default_module`). Use `{{field_name}}` placeholders to interpolate runtime data the same way the LLM plugins context field does.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_message_placeholder'),    'Type your reply…',         'Placeholder of the message input.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_send_label'),             'Send',                     'Label of the send button.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_start_label'),            'Start conversation',       'Label of the explicit start button (used when auto-start is disabled).'),
