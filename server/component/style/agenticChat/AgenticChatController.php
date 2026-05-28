@@ -170,19 +170,29 @@ class AgenticChatController extends BaseController
     }
 
     /**
-     * Configure the active thread on the backend (idempotent).
+     * Configure the active thread on the backend.
      *
      * The persona slot map is rebuilt from the section configuration on
      * the server side - the React frontend is not allowed to override it.
      * Module content is always read from the global plugin configuration.
+     *
+     * NOTE: this call is **not** idempotent on the upstream side - every
+     * `/reflect/configure` invocation clears the cached workflow for the
+     * thread, including any pending HITL interrupts. The React frontend
+     * therefore only fires `start_thread` on a genuinely fresh section
+     * (no persisted messages, no pending interrupts) so we never trample
+     * a live conversation. Resume turns flow through `actionStreamRun`
+     * without reconfiguring.
      */
     private function actionStartThread($userId)
     {
         $sectionId = $this->model->getSectionId();
         $thread = $this->service->getOrCreateThread($userId, $sectionId);
 
-        $slotMap = $this->model->buildBackendSlotMap();
-        $result = $this->service->configureThread($thread, $slotMap);
+        // Resolve the section's slot_type -> persona variants (with
+        // global fallback) and configure the backend thread with them.
+        $slotPersonas = $this->model->getResolvedSlotPersonas();
+        $result = $this->service->configureThread($thread, $slotPersonas);
 
         $thread = $this->service->getThreadService()->getThreadById($thread['id']);
 
@@ -196,67 +206,95 @@ class AgenticChatController extends BaseController
     /**
      * Stream a single AG-UI run as SSE through this same-origin endpoint.
      *
+     * The plugin acts as an AG-UI normalisation bridge between two
+     * speakers:
+     *
+     *   Backend (legacy)          : snake/camel mix, `RUN_FINISHED.interrupt`,
+     *                               in-memory thread config that can drift on
+     *                               restart.
+     *   React chat (strict AG-UI) : camelCase ids, `RUN_FINISHED.outcome`,
+     *                               normalised `PendingInterrupt` objects,
+     *                               resume payloads of the form
+     *                               `Array<{ interruptId, status, payload? }>`.
+     *
      * The same `agui_thread_id` is reused for the lifetime of the
-     * conversation: it is generated once by `getOrCreateThread()` (when
-     * the user first interacts with this section), used by
-     * `/reflect/configure` to register the personas + module content on
-     * the backend, and then bound to every subsequent `/reflect` call so
-     * the backend can correlate run history. To make that contract hold
-     * even when the React client jumps straight to `stream_run` without
-     * an explicit `start_thread` (e.g. auto-start disabled, manual send
-     * from a fresh tab, page refresh of a never-configured thread), we
-     * auto-configure the thread here on its very first run. Subsequent
-     * runs detect `persona_slot_map !== null` and skip the configure
-     * round-trip, so this is a no-op once the thread is registered.
+     * conversation. The backend thread is configured exactly once, when
+     * it is first created in `actionStartThread`, and again when the
+     * user resets the thread. We deliberately do NOT reconfigure on
+     * every stream run: upstream `set_thread_config()` clears the
+     * in-memory workflow for the thread, which would wipe any pending
+     * HITL interrupts and break resume turns.
      *
      * Request body fields:
      *   - section_id (already validated)
      *   - message    string            user input or auto-start token
-     *   - resume     json (optional)   AG-UI resume payload
+     *   - resume     json (optional)   Strict AG-UI resume payload coming
+     *                                  from the React chat:
+     *                                  `Array<{ interruptId, status, payload? }>`.
+     *                                  Translated here back to the
+     *                                  backend's legacy
+     *                                  `{ interrupts: [{ id, value }] }`
+     *                                  shape via the event normaliser.
      */
     private function actionStreamRun($userId)
     {
         $sectionId = $this->model->getSectionId();
         $thread = $this->service->getOrCreateThread($userId, $sectionId);
 
-        // Lazily register the personas on the backend the first time
-        // this thread is used. `persona_slot_map` is the canonical "this
-        // thread has been configured" signal: it is set inside
-        // `configureThread()` together with `module_content`, and it is
-        // never cleared while the thread is active. Reusing the same
-        // `agui_thread_id` for the configure call guarantees that every
-        // later `/reflect` run carrying this thread_id finds the persona
-        // bindings and accumulated history server-side.
-        if (empty($thread['persona_slot_map'])) {
-            $slotMap = $this->model->buildBackendSlotMap();
-            $configureResult = $this->service->configureThread($thread, $slotMap);
-            $thread = $this->service->getThreadService()->getThreadById($thread['id']);
-            if (!$configureResult['ok']) {
-                // Without a configured thread the backend will reject the
-                // stream (or worse, silently start a fresh context). Surface
-                // the error to the React client instead of streaming into
-                // the void.
-                $this->startSseStream();
-                $this->sendSseEvent([
-                    'type' => 'PROXY_ERROR',
-                    'message' => $configureResult['error'] ?? 'Failed to configure thread',
-                    'status' => $configureResult['status'] ?? 500,
-                ]);
-                $this->sendSseEvent(['type' => 'PROXY_DONE', 'ok' => false]);
-                if (function_exists('uopz_allow_exit')) {
-                    uopz_allow_exit(true);
-                }
-                exit;
-            }
-        }
+        // DO NOT reconfigure the backend thread here.
+        //
+        // The upstream `set_thread_config()` calls
+        // `self.clear_thread_workflow(thread_id)` on every invocation,
+        // which deletes the in-memory workflow for that thread —
+        // including any HITL interrupts the backend is waiting on. A
+        // reconfigure between two `stream_run` calls therefore wipes
+        // the interrupt id we just persisted in `pending_interrupts`,
+        // and the next `/reflect` resume returns
+        // `"No pending requests found in workflow context."`.
+        //
+        // Configuration is set exactly once when the thread is first
+        // created (see `actionStartThread`), and again whenever the
+        // user explicitly resets the thread. Backend restarts in the
+        // middle of a conversation are a known limitation: when that
+        // happens the thread loses its custom personas/module text and
+        // the user has to start a new thread to recover. The cost of
+        // that edge case is acceptable; clobbering active interrupts
+        // on every turn is not.
+        $slotPersonas = $this->model->getResolvedSlotPersonas();
+        $slotMap = $this->service->getPersonaService()->buildBackendSlotKeyMap($slotPersonas);
 
         $message = isset($_POST['message']) ? (string) $_POST['message'] : null;
         $resumeRaw = $_POST['resume'] ?? null;
-        $resume = null;
+        $resumeStrict = null;
         if (is_string($resumeRaw) && $resumeRaw !== '') {
             $decoded = json_decode($resumeRaw, true);
             if (is_array($decoded)) {
-                $resume = $decoded;
+                $resumeStrict = $decoded;
+            }
+        }
+
+        // Translate the strict-AG-UI resume coming from the React chat
+        // (`Array<{ interruptId, status, payload? }>`) back into the
+        // backend's legacy `{ interrupts: [{ id, value }] }` payload.
+        $legacyResume = null;
+        if (is_array($resumeStrict) && !empty($resumeStrict)) {
+            $pendingInterrupts = !empty($thread['pending_interrupts'])
+                ? json_decode((string) $thread['pending_interrupts'], true)
+                : [];
+            if (!is_array($pendingInterrupts)) {
+                $pendingInterrupts = [];
+            }
+            // Accept both the canonical array shape AND the
+            // back-compat `{ interrupts: [...] }` shape so legacy
+            // callers can still resume their existing threads.
+            $resumeList = isset($resumeStrict[0]) ? $resumeStrict
+                : ($resumeStrict['interrupts'] ?? null);
+            if (is_array($resumeList)) {
+                $built = $this->service->getNormalizer()
+                    ->buildLegacyResumePayload($resumeList, $pendingInterrupts);
+                if (!empty($built)) {
+                    $legacyResume = $built;
+                }
             }
         }
 
@@ -268,10 +306,13 @@ class AgenticChatController extends BaseController
             'conversationId' => (int) $thread['id_llmConversations'],
         ]);
 
-        $forward = function (string $rawChunk) {
-            // Forward the upstream SSE chunk verbatim. The chunk already
-            // contains "data: ...\n\n" framing.
-            echo $rawChunk;
+        $forwardEvent = function (array $normalisedEvent) {
+            // Re-serialise as a single SSE block so the React reader
+            // sees clean `data: <json>\n\n` framing regardless of how
+            // cURL chunked the upstream bytes. This is also where the
+            // canonical strict-AG-UI payload crosses the boundary into
+            // the React chat.
+            echo 'data: ' . json_encode($normalisedEvent, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n\n";
             @flush();
 
             if (connection_aborted()) {
@@ -280,7 +321,7 @@ class AgenticChatController extends BaseController
             return null;
         };
 
-        $result = $this->service->streamRun($thread, $message, $resume, $forward);
+        $result = $this->service->streamRun($thread, $message, $legacyResume, $forwardEvent, $slotMap);
 
         if (!$result['ok']) {
             $this->sendSseEvent([
@@ -462,12 +503,35 @@ class AgenticChatController extends BaseController
             ? json_decode((string) $thread['persona_slot_map'], true)
             : null;
 
+        // Pending interrupts are persisted in the strict normalised
+        // shape produced by `AgenticChatEventNormalizer::normalizeInterrupt`
+        // (`{ interruptId, message?, metadata?, sourceExecutorId?, ... }`).
+        // Older rows that pre-date the normaliser may still carry the
+        // legacy `{ id, value }` shape; coerce those on the fly so the
+        // React chat sees one strict model only.
         $pendingInterrupts = !empty($thread['pending_interrupts'])
             ? json_decode((string) $thread['pending_interrupts'], true)
             : null;
         if (!is_array($pendingInterrupts)) {
             $pendingInterrupts = [];
         }
+        $normaliser = $this->service->getNormalizer();
+        $slotMapForLookup = is_array($slotMap) ? $slotMap : [];
+        $pendingInterrupts = array_values(array_map(static function ($entry) use ($normaliser, $slotMapForLookup) {
+            if (!is_array($entry)) {
+                return null;
+            }
+            if (isset($entry['interruptId'])) {
+                return $entry;
+            }
+            if (isset($entry['id'])) {
+                return $normaliser->normalizeInterrupt($entry, $slotMapForLookup);
+            }
+            return null;
+        }, $pendingInterrupts));
+        $pendingInterrupts = array_values(array_filter($pendingInterrupts, static function ($v) {
+            return is_array($v);
+        }));
 
         return [
             'thread' => [

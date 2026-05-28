@@ -9,17 +9,17 @@
  * Centralised lookup keys used by the plugin. Values mirror the rows
  * inserted by v1.0.0.sql into the `lookups` table.
  *
+ * Note: the legacy `agenticChatPersonaRole` lookup type was removed in
+ * v1.1.0. Persona role/expert/supporter/other categories no longer
+ * exist because the Python backend only supports three concrete
+ * teacher slots (foundational / inclusive / inquiry) plus a fixed,
+ * non-configurable mediator. Slot types are now declared in
+ * `globals.php` as `AGENTIC_CHAT_PERSONA_SLOT_TYPES` and are not
+ * stored in the `lookups` table.
+ *
  * @package LLM Agentic Chat Plugin
  */
 
-/* type_code values */
-define('AGENTIC_CHAT_LOOKUP_TYPE_PERSONA_ROLE', 'agenticChatPersonaRole');
+/* type_code values still used by the plugin */
 define('AGENTIC_CHAT_LOOKUP_TYPE_THREAD_STATUS', 'agenticChatThreadStatus');
-
-/* lookup_code values for persona role (informational; used by the editor UI) */
-define('AGENTIC_CHAT_PERSONA_ROLE_MEDIATOR', 'agentic_persona_role_mediator');
-define('AGENTIC_CHAT_PERSONA_ROLE_TEACHER', 'agentic_persona_role_teacher');
-define('AGENTIC_CHAT_PERSONA_ROLE_EXPERT', 'agentic_persona_role_expert');
-define('AGENTIC_CHAT_PERSONA_ROLE_SUPPORTER', 'agentic_persona_role_supporter');
-define('AGENTIC_CHAT_PERSONA_ROLE_OTHER', 'agentic_persona_role_other');
 ?>

@@ -11,7 +11,13 @@
  * typing dots prevent the UI from looking frozen during that window.
  */
 import React, { useEffect, useMemo, useRef } from 'react';
-import type { ChatMessage, InFlightMessage, Persona, PersonaSlotMap } from '../../types';
+import type {
+  AssistantSpeakerMetadata,
+  ChatMessage,
+  InFlightMessage,
+  Persona,
+  PersonaSlotMap,
+} from '../../types';
 import { findPersonaByAuthor, indexPersonas } from '../../utils/persona-mapping';
 import { MessageBubble } from './MessageBubble';
 
@@ -59,30 +65,72 @@ export const MessageList: React.FC<MessageListProps> = ({
   return (
     <div className="agentic-chat__scroller" ref={scrollerRef} role="log" aria-live="polite">
       {visibleMessages.map((msg) => {
-        const personaKey = (msg.context as { authorPersonaKey?: string } | null)?.authorPersonaKey;
-        const persona = personaKey
-          ? personasByKey[personaKey] || null
-          : findPersonaByAuthor(personas, slotMap, null);
+        const ctx = msg.context as (AssistantSpeakerMetadata & Record<string, unknown>) | null;
+        // Resolve the speaker for an assistant message in this order:
+        //   1. Persisted `authorPersonaKey` from the message itself.
+        //   2. Persisted `authorName` / `sourceExecutorId` looked up
+        //      through the section's slot map.
+        //   3. (last-resort) name-based scan of the persona library.
+        // This ensures the avatar/name survive a page refresh — the
+        // transient `currentPersonaKey` handoff state from useMessages
+        // is no longer needed for correctness.
+        let persona: Persona | null = null;
+        if (msg.role === 'assistant' && ctx) {
+          if (ctx.authorPersonaKey) {
+            persona = personasByKey[ctx.authorPersonaKey] || null;
+          }
+          if (!persona && (ctx.authorName || ctx.sourceExecutorId)) {
+            persona = findPersonaByAuthor(personas, slotMap, ctx.authorName || ctx.sourceExecutorId || null);
+          }
+        }
+        // Use the AG-UI `messageId` as the React key whenever we have
+        // one so the streaming bubble (rendered from `inFlight`) and
+        // the persisted bubble (rendered from `messages` after
+        // TEXT_MESSAGE_END) reconcile to the SAME DOM node. Without
+        // this the React diff treats them as different elements,
+        // unmounts the streaming bubble and remounts a fresh one,
+        // which the user perceives as a "reload" flicker between the
+        // last delta and the final message.
+        const stableKey = typeof ctx?.messageId === 'string' && ctx.messageId
+          ? `msg-${ctx.messageId}`
+          : `id-${msg.id}`;
         return (
           <MessageBubble
-            key={msg.id}
+            key={stableKey}
             role={msg.role}
             content={msg.content}
-            persona={msg.role === 'assistant' ? persona : null}
+            persona={persona}
+            authorName={ctx?.authorName}
             timestamp={formatTimestamp(msg.created_at)}
           />
         );
       })}
 
-      {inFlight.map((buf) => (
-        <MessageBubble
-          key={`buf-${buf.id}`}
-          role={buf.role}
-          content={buf.text}
-          persona={buf.authorPersonaKey ? personasByKey[buf.authorPersonaKey] || null : null}
-          isStreaming
-        />
-      ))}
+      {inFlight.map((buf) => {
+        let persona: Persona | null = null;
+        if (buf.authorPersonaKey) {
+          persona = personasByKey[buf.authorPersonaKey] || null;
+        }
+        if (!persona && (buf.authorName || buf.sourceExecutorId)) {
+          persona = findPersonaByAuthor(personas, slotMap, buf.authorName || buf.sourceExecutorId || null);
+        }
+        // Same `msg-<messageId>` key the persisted bubble will use
+        // when TEXT_MESSAGE_END fires; that way React keeps the same
+        // DOM node and updates content/timestamp in place instead of
+        // tearing down the streaming bubble and rebuilding from
+        // scratch.
+        const stableKey = buf.messageId ? `msg-${buf.messageId}` : `buf-${buf.id}`;
+        return (
+          <MessageBubble
+            key={stableKey}
+            role={buf.role}
+            content={buf.text}
+            persona={persona}
+            authorName={buf.authorName}
+            isStreaming
+          />
+        );
+      })}
 
       {showTypingIndicator && (
         <div className="agentic-typing" role="status" aria-live="polite">

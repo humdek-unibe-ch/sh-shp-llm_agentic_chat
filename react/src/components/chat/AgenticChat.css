@@ -477,6 +477,100 @@
   border-radius: 0;
 }
 
+/* Interrupt prompt cards -------------------------------------------------- */
+
+.agentic-chat__interrupts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem 1rem;
+  background: linear-gradient(180deg, #fff8e1 0%, #fffdf5 100%);
+  border-top: 1px solid #ffe082;
+}
+
+.agentic-interrupt-card {
+  border: 1px solid #ffd54f;
+  border-radius: 0.5rem;
+  background: #fffbe6;
+  padding: 0.75rem 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.agentic-interrupt-card__header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.agentic-interrupt-card__avatar {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #ffb300;
+  color: #fff;
+  font-weight: 600;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.agentic-interrupt-card__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.agentic-interrupt-card__meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agentic-interrupt-card__author {
+  font-weight: 600;
+  color: #5d4037;
+}
+
+.agentic-interrupt-card__reason {
+  font-size: 0.8rem;
+  color: #8d6e63;
+  text-transform: capitalize;
+}
+
+.agentic-interrupt-card__counter {
+  color: #a1887f;
+  text-transform: none;
+}
+
+.agentic-interrupt-card__body {
+  color: #3e2723;
+  font-size: 0.925rem;
+  line-height: 1.4;
+}
+
+.agentic-interrupt-card__body p:last-child {
+  margin-bottom: 0;
+}
+
+.agentic-interrupt-card__debug {
+  margin-top: 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+}
+
+.agentic-interrupt-card__debug pre {
+  margin: 0.25rem 0 0;
+  padding: 0.5rem;
+  background: #1e1e1e;
+  color: #f8f9fa;
+  border-radius: 0.25rem;
+  max-height: 12rem;
+  overflow: auto;
+}
+
 /* Debug panel ------------------------------------------------------------- */
 
 .agentic-debug {

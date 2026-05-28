@@ -21,7 +21,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { AgenticChatConfig, AgUiEvent, PendingInterrupt } from '../../types';
+import type { AgenticChatConfig, AgUiEvent, PendingInterrupt, ResumeEntry } from '../../types';
 import { createChatApi } from '../../utils/api';
 import { isCaseCompleteText } from '../../utils/ag-ui-events';
 import { useAgenticThread } from '../../hooks/useAgenticThread';
@@ -99,13 +99,12 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
   }, [thread.messages, messagesHook]);
 
   // Sync persisted pending_interrupts into the interrupts hook so the
-  // UI can resume mid-conversation after a page refresh.
+  // UI can resume mid-conversation after a page refresh. The PHP
+  // controller already returns the normalised `PendingInterrupt` shape,
+  // so we just hand the array straight to the hook.
   const lastSyncedInterruptsRef = useRef<string>('');
   useEffect(() => {
-    const list: PendingInterrupt[] = (thread.thread?.pendingInterrupts ?? []).map((i) => ({
-      interruptId: String(i.id),
-      payload: { id: i.id, value: i.value },
-    }));
+    const list: PendingInterrupt[] = thread.thread?.pendingInterrupts ?? [];
     const fingerprint = list.map((i) => i.interruptId).join('|');
     if (fingerprint !== lastSyncedInterruptsRef.current) {
       lastSyncedInterruptsRef.current = fingerprint;
@@ -155,35 +154,35 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
   }, [api, interrupts, messagesHook, runStatus, stream, thread]);
 
   /**
-   * Send a user message. When a HITL interrupt is pending, package the
-   * message as an AG-UI resume payload that targets the most recent
-   * interrupt id. Otherwise send a plain `message` and let the backend
-   * start a fresh run.
+   * Send a user message.
+   *
+   * When one or more HITL interrupts are pending, the user reply is
+   * routed back as a strict-AG-UI resume payload that covers EVERY
+   * open interrupt (the PHP bridge then translates the array back into
+   * the legacy `{ interrupts: [{ id, value }] }` shape). When no
+   * interrupts are pending the message starts a fresh run.
+   *
+   * Optimistically clearing the local pending list mirrors the
+   * upstream behaviour: the next RUN_FINISHED will either re-add the
+   * interrupts (multi-turn HITL) or end the run cleanly.
    */
   const sendMessage = useCallback(async (text: string) => {
     if (runStatus.caseClosed) return;
     messagesHook.appendUserMessage(text);
 
-    const currentInterrupt = interrupts.current;
-    if (currentInterrupt) {
-      // Per https://docs.ag-ui.com/concepts/interrupts#resuming-a-run.
-      const resume = {
-        interrupts: [
-          {
-            id: currentInterrupt.interruptId,
-            value: [
-              {
-                role: 'user',
-                contents: [{ type: 'text', text }],
-              },
-            ],
-          },
-        ],
-      };
-      // Optimistically clear the interrupt locally so the UI flips out
-      // of "awaiting_input" immediately. The next RUN_FINISHED will
-      // either re-add it (multi-turn HITL) or end the run.
-      interrupts.resolve(currentInterrupt.interruptId);
+    const open = interrupts.interrupts;
+    if (open.length > 0) {
+      const resume: ResumeEntry[] = open.map((interrupt) => ({
+        interruptId: interrupt.interruptId,
+        status: 'resolved',
+        payload: { text },
+      }));
+      // Clear locally so the UI flips out of "awaiting_input"
+      // immediately for every open interrupt. The next RUN_FINISHED
+      // will either re-add some of them or finish the run.
+      for (const interrupt of open) {
+        interrupts.resolve(interrupt.interruptId);
+      }
       await stream.start({ message: text, resume });
       return;
     }
@@ -265,6 +264,7 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
       speechToTextModel={config.speechToTextModel}
       sectionId={config.sectionId}
       controllerUrl={config.controllerUrl}
+      pendingInterrupts={interrupts.interrupts}
       onSend={(text) => void sendMessage(text)}
       onStart={() => void startThread()}
       onReset={() => void resetThread()}

@@ -1,14 +1,26 @@
 /**
  * useMessages - keeps the visible message list in sync with the AG-UI
- * stream. Persisted messages (loaded from get_thread) are stored in
- * state; in-flight assistant text is buffered in a ref to avoid
- * excessive re-renders, and committed when TEXT_MESSAGE_END fires.
+ * stream.
+ *
+ * Persisted messages (loaded from `get_thread`) are stored in state.
+ * In-flight assistant text is buffered in a ref keyed by AG-UI
+ * `messageId`, and committed to `messages` when `TEXT_MESSAGE_END`
+ * fires. Each finalised assistant message inherits the speaker
+ * metadata streamed alongside its TEXT_MESSAGE_* lifecycle
+ * (`authorName`, `sourceExecutorId`, `authorPersonaKey`, …) so the
+ * renderer can resolve avatars/names from the message itself rather
+ * than from transient global handoff state.
  */
 import { useCallback, useRef, useState } from 'react';
-import type { ChatMessage, AgUiEvent, InFlightMessage } from '../types';
+import type {
+  AgUiEvent,
+  AssistantSpeakerMetadata,
+  ChatMessage,
+  InFlightMessage,
+} from '../types';
 import {
-  getMessageId,
   extractHandoffTarget,
+  getMessageId,
 } from '../utils/ag-ui-events';
 
 export interface UseMessagesResult {
@@ -18,7 +30,7 @@ export interface UseMessagesResult {
   appendUserMessage: (text: string) => void;
   handleAgUiEvent: (event: AgUiEvent) => void;
   clear: () => void;
-  /** Persona key inferred from the most recent handoff_to_<key>. */
+  /** Persona key currently in focus, derived from handoff / speaker events. */
   currentPersonaKey: string | null;
 }
 
@@ -27,6 +39,32 @@ function nextOptimisticId(): number {
   // Negative ids so they don't collide with real DB rows.
   optimisticIdCounter += 1;
   return -1000 - optimisticIdCounter;
+}
+
+/**
+ * Extract any speaker metadata fields the event carries (camelCase
+ * only; the bridge has already normalised the snake_case originals).
+ */
+function speakerFromEvent(ev: AgUiEvent): AssistantSpeakerMetadata {
+  const out: AssistantSpeakerMetadata = {};
+  if (typeof ev.authorName === 'string') out.authorName = ev.authorName;
+  if (typeof ev.sourceExecutorId === 'string') out.sourceExecutorId = ev.sourceExecutorId;
+  if (typeof ev.authorSlot === 'string') out.authorSlot = ev.authorSlot;
+  if (typeof ev.authorPersonaKey === 'string') out.authorPersonaKey = ev.authorPersonaKey;
+  if (typeof ev.runId === 'string') out.runId = ev.runId;
+  return out;
+}
+
+function mergeSpeaker(
+  base: AssistantSpeakerMetadata,
+  next: AssistantSpeakerMetadata
+): AssistantSpeakerMetadata {
+  return {
+    ...base,
+    ...Object.fromEntries(
+      Object.entries(next).filter(([, v]) => v !== undefined && v !== '')
+    ),
+  };
 }
 
 export function useMessages(): UseMessagesResult {
@@ -68,6 +106,14 @@ export function useMessages(): UseMessagesResult {
 
   const handleAgUiEvent = useCallback((event: AgUiEvent) => {
     const messageId = getMessageId(event);
+    const speaker = speakerFromEvent(event);
+
+    // If the normaliser has resolved a persona key for the current
+    // speaker, promote it to the global "active" state so the persona
+    // strip and typing indicator follow along.
+    if (speaker.authorPersonaKey) {
+      setCurrentPersonaKey(speaker.authorPersonaKey);
+    }
 
     switch (event.type) {
       case 'TEXT_MESSAGE_START': {
@@ -78,7 +124,9 @@ export function useMessages(): UseMessagesResult {
           text: '',
           isComplete: false,
           startedAt: Date.now(),
-          authorPersonaKey: currentPersonaKey || undefined,
+          messageId,
+          ...speaker,
+          authorPersonaKey: speaker.authorPersonaKey ?? currentPersonaKey ?? undefined,
         };
         commitInFlight();
         return;
@@ -88,15 +136,19 @@ export function useMessages(): UseMessagesResult {
         if (!messageId) return;
         const buf = buffersRef.current[messageId] ?? {
           id: messageId,
-          role: 'assistant',
+          role: 'assistant' as InFlightMessage['role'],
           text: '',
           isComplete: false,
           startedAt: Date.now(),
-          authorPersonaKey: currentPersonaKey || undefined,
+          messageId,
+          ...speaker,
+          authorPersonaKey: speaker.authorPersonaKey ?? currentPersonaKey ?? undefined,
         };
         const delta = typeof event.delta === 'string' ? event.delta : '';
-        buf.text += delta;
-        buffersRef.current[messageId] = buf;
+        // Late-arriving speaker metadata: some backend variants only
+        // name the executor on the first CONTENT event.
+        const next: InFlightMessage = { ...buf, ...mergeSpeaker(buf, speaker), text: buf.text + delta };
+        buffersRef.current[messageId] = next;
         commitInFlight();
         return;
       }
@@ -107,13 +159,21 @@ export function useMessages(): UseMessagesResult {
         if (!buf) return;
 
         if (buf.text.trim().length > 0 && buf.role !== 'user') {
+          const persistedContext: ChatMessage['context'] = {
+            messageId: buf.messageId ?? messageId,
+            authorPersonaKey: buf.authorPersonaKey,
+            authorName: buf.authorName,
+            sourceExecutorId: buf.sourceExecutorId,
+            authorSlot: buf.authorSlot,
+            runId: buf.runId,
+          };
           setMessages((prev) => [
             ...prev,
             {
               id: nextOptimisticId(),
               role: 'assistant',
               content: buf.text,
-              context: { messageId, authorPersonaKey: buf.authorPersonaKey ?? null },
+              context: persistedContext,
               created_at: new Date().toISOString(),
             },
           ]);
@@ -132,11 +192,16 @@ export function useMessages(): UseMessagesResult {
           text: '',
           isComplete: false,
           startedAt: Date.now(),
-          authorPersonaKey: currentPersonaKey || undefined,
+          messageId,
+          ...speaker,
+          authorPersonaKey: speaker.authorPersonaKey ?? currentPersonaKey ?? undefined,
         };
         const delta = typeof event.delta === 'string' ? event.delta : '';
-        buf.text += delta;
-        buffersRef.current[messageId] = buf;
+        buffersRef.current[messageId] = {
+          ...buf,
+          ...mergeSpeaker(buf, speaker),
+          text: buf.text + delta,
+        };
         commitInFlight();
         return;
       }
@@ -158,7 +223,7 @@ export function useMessages(): UseMessagesResult {
             id: nextOptimisticId(),
             role: m.role as ChatMessage['role'],
             content: String(m.content),
-            context: { messageId: m.id ?? null, source: 'snapshot' },
+            context: { messageId: m.id ?? undefined, source: 'snapshot' },
             created_at: new Date().toISOString(),
           }));
         setMessages(snap);

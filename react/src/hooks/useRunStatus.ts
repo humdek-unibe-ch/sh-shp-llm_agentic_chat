@@ -23,6 +23,7 @@
  */
 import { useCallback, useState } from 'react';
 import type { AgUiEvent, RunStatus } from '../types';
+import { getRunFinishedOutcome } from '../utils/ag-ui-events';
 
 export interface UseRunStatusResult {
   status: RunStatus;
@@ -58,14 +59,16 @@ export function useRunStatus({ caseCompleteMarker }: UseRunStatusOptions): UseRu
       case 'RUN_FINISHED': {
         // RUN_FINISHED only signals "this turn is over". Whether the
         // case is closed or the agent paused on a HITL is decided by:
-        //   - presence of `interrupt[]` on the event itself (HITL pause)
+        //   - `outcome.type === 'interrupt'` on the normalised event
+        //     (HITL pause)
         //   - the presence of `case_complete` CUSTOM event
         //   - the trailing "Case complete." text marker
-        // We move from `running` to `awaiting_input` if interrupts are
-        // attached, otherwise back to `idle`. The terminal `completed`
-        // status is set by `markComplete()` from outside.
-        const rawInterrupts = (event.interrupt ?? event.interrupts) as unknown;
-        const hasInterrupt = Array.isArray(rawInterrupts) && rawInterrupts.length > 0;
+        // We move from `running` to `awaiting_input` when the normaliser
+        // reports an interrupt outcome, otherwise back to `idle`. The
+        // terminal `completed` status is set by `markComplete()` from
+        // outside.
+        const outcome = getRunFinishedOutcome(event);
+        const hasInterrupt = outcome?.type === 'interrupt' && outcome.interrupts.length > 0;
         setStatus((prev) => {
           if (prev === 'error' || prev === 'completed') return prev;
           return hasInterrupt ? 'awaiting_input' : 'idle';

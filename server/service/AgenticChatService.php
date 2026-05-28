@@ -6,6 +6,7 @@
 require_once __DIR__ . '/AgenticChatBackendClient.php';
 require_once __DIR__ . '/AgenticChatPersonaService.php';
 require_once __DIR__ . '/AgenticChatThreadService.php';
+require_once __DIR__ . '/AgenticChatEventNormalizer.php';
 
 /**
  * High-level orchestrator for agentic chat sessions.
@@ -36,6 +37,9 @@ class AgenticChatService
     /** @var AgenticChatThreadService */
     private $threadService;
 
+    /** @var AgenticChatEventNormalizer */
+    private $normalizer;
+
     /** @var array<string,string|null>|null Cached config from sh_module_llm_agentic_chat. */
     private $configCache;
 
@@ -45,6 +49,13 @@ class AgenticChatService
         $this->db = $services->get_db();
         $this->personaService = new AgenticChatPersonaService();
         $this->threadService = new AgenticChatThreadService($services);
+        $this->normalizer = new AgenticChatEventNormalizer();
+    }
+
+    /** @return AgenticChatEventNormalizer */
+    public function getNormalizer()
+    {
+        return $this->normalizer;
     }
 
     /** @return AgenticChatPersonaService */
@@ -142,33 +153,40 @@ class AgenticChatService
     }
 
     /**
-     * Configure a thread on the backend by mapping a slot map to a
-     * `/reflect/configure` payload. The module content is always sourced
-     * from the global configuration (since plugin v1.1.0).
+     * Configure a thread on the backend.
      *
-     * @param array  $thread  Thread row from getOrCreateThread().
-     * @param array  $slotMap Backend slot -> persona key mapping
-     *                        (already resolved by the caller; usually
-     *                        AgenticChatModel::buildBackendSlotMap()).
+     * The caller resolves which personas to use (via the section's
+     * selection + global fallback) and passes the slot_type -> persona
+     * map. The service translates that into the backend's
+     * `/reflect/configure` payload (mediator excluded — it is fixed in
+     * the Python backend).
+     *
+     * @param array                 $thread        Thread row from getOrCreateThread().
+     * @param array<string, array>  $slotPersonas  slot_type -> persona object
+     *                                             (from `AgenticChatPersonaService::resolveSlotPersonas()`
+     *                                             / `AgenticChatModel::getResolvedSlotPersonas()`).
      * @return array{ok:bool, status:int, data?:array, error?:string}
      */
-    public function configureThread(array $thread, array $slotMap)
+    public function configureThread(array $thread, array $slotPersonas)
     {
         $cfg = $this->getGlobalConfig();
         $module = (string) $cfg['default_module'];
 
         $payload = $this->personaService->buildConfigurePayload(
-            $cfg['personas'],
-            $slotMap,
+            $slotPersonas,
             $module,
             (string) $thread['agui_thread_id']
         );
 
         $client = $this->getBackendClient();
 
+        // Persist a backend-slot -> persona-key map for the threads
+        // viewer and the event normaliser (mediator key is fixed).
+        $slotKeyMap = $this->personaService->buildBackendSlotKeyMap($slotPersonas);
+
         $this->threadService->updateThread($thread['id'], [
             'status' => AGENTIC_CHAT_STATUS_CONFIGURING,
-            'persona_slot_map' => json_encode($slotMap),
+            'persona_slot_map' => json_encode($slotKeyMap),
             'module_content' => $module,
         ]);
 
@@ -185,9 +203,17 @@ class AgenticChatService
     }
 
     /**
-     * Stream a /reflect run, forwarding raw SSE chunks to a callback while
-     * accumulating TEXT_MESSAGE_CONTENT deltas per message id and writing
-     * the finalised assistant text into llmMessages on TEXT_MESSAGE_END.
+     * Stream a /reflect run, forwarding NORMALISED AG-UI events to the
+     * caller while accumulating TEXT_MESSAGE_CONTENT deltas per message
+     * id and writing finalised assistant text into llmMessages on
+     * TEXT_MESSAGE_END.
+     *
+     * The PHP service intentionally sits BETWEEN the upstream legacy
+     * backend and the React chat: the backend keeps speaking its
+     * snake/camel mix and singular `RUN_FINISHED.interrupt` arrays, and
+     * the service rewrites every event into the strict AG-UI shape
+     * before forwarding via `$onNormalisedEvent`. The original payload
+     * is preserved under `_rawLegacy` for debug.
      *
      * AG-UI semantics implemented here:
      *
@@ -203,19 +229,32 @@ class AgenticChatService
      *    The visible `$userMessage` (if provided) is still logged to
      *    `llmMessages` for audit but NOT echoed in upstream messages.
      *
-     * @param array        $thread       Thread row.
-     * @param string|null  $userMessage  Visible user input for this turn
-     *                                   (null = kickoff/resume only). Used
-     *                                   for `llmMessages` logging in all
-     *                                   modes; only included in the
-     *                                   upstream `messages` array when
-     *                                   `$resume` is empty.
-     * @param array|null   $resume       AG-UI resume payload (optional).
-     * @param callable     $onChunk      function(string $rawChunk): bool|null
-     *                                   - return false to abort.
+     * @param array        $thread              Thread row.
+     * @param string|null  $userMessage         Visible user input for this turn
+     *                                          (null = kickoff/resume only). Used
+     *                                          for `llmMessages` logging in all
+     *                                          modes; only included in the
+     *                                          upstream `messages` array when
+     *                                          `$resume` is empty.
+     * @param array|null   $resume              Backend legacy resume payload
+     *                                          (`{ interrupts: [...] }`). The
+     *                                          controller is responsible for
+     *                                          translating the new strict shape
+     *                                          coming from the React client
+     *                                          (`Array<{ interruptId, status, payload }>`)
+     *                                          into this legacy shape via the
+     *                                          event normaliser.
+     * @param callable     $onNormalisedEvent   function(array $event): bool|null
+     *                                          - receives one normalised event
+     *                                            at a time (camelCase ids,
+     *                                            `RUN_FINISHED.outcome`).
+     *                                          - return false to abort.
+     * @param array        $slotMap             Backend slot → persona key map
+     *                                          (used to resolve speakers /
+     *                                          interrupt source executors).
      * @return array{ok:bool, status:int, error?:string}
      */
-    public function streamRun(array $thread, $userMessage, $resume, callable $onChunk)
+    public function streamRun(array $thread, $userMessage, $resume, callable $onNormalisedEvent, array $slotMap = [])
     {
         $cfg = $this->getGlobalConfig();
         $client = $this->getBackendClient();
@@ -274,10 +313,11 @@ class AgenticChatService
         $caseClosed = false;
         $usage = ['input' => null, 'output' => null, 'total' => null];
         $lastError = null;
-        $pendingInterrupts = [];   // [{id, value}] captured from RUN_FINISHED.interrupt
+        $pendingInterrupts = [];   // normalised interrupts captured from RUN_FINISHED.outcome
         $awaitingInput = false;
         $service = $this; // avoid PHP <7.4 "$this in static closure" pitfalls
         $threadRef = $thread;
+        $normalizer = $this->normalizer;
         // SSE byte buffer - cURL hands us arbitrary chunks that may split
         // mid-event ("data: {...partial..."). We keep the leftover tail
         // here so the next chunk can complete the event before parsing.
@@ -289,47 +329,75 @@ class AgenticChatService
         $sseHandler = function (string $rawChunk) use (
             &$assistantBuffers, &$caseClosed, &$usage, &$lastError,
             &$pendingInterrupts, &$awaitingInput, &$sseBuffer,
-            $threadRef, $service, $onChunk
+            $threadRef, $service, $onNormalisedEvent, $normalizer, $slotMap
         ) {
-            $continue = $onChunk($rawChunk);
-
-            // Parse the chunk to keep llmMessages in sync. The AG-UI wire
-            // protocol uses standard SSE: each event is "data: <json>\n\n".
-            // parseSseChunk is stateful via $sseBuffer: it returns only
-            // complete events and stores any unfinished tail back into
-            // the buffer for the next call.
+            // Parse the chunk into complete events. parseSseChunk is
+            // stateful via $sseBuffer: it returns only complete events
+            // and stores any unfinished tail back into the buffer for
+            // the next call.
             $events = $service->parseSseChunk($rawChunk, $sseBuffer);
+
             foreach ($events as $event) {
                 if (!is_array($event) || !isset($event['type'])) {
                     continue;
                 }
 
-                $type = $event['type'];
-                $messageId = $event['message_id'] ?? $event['messageId'] ?? null;
+                // Normalise BEFORE forwarding so the React side sees
+                // strict AG-UI shapes only (camelCase, RUN_FINISHED.outcome,
+                // structured interrupts).
+                $normalised = $normalizer->normalizeEvent($event, $slotMap);
+                $forwarded = $onNormalisedEvent($normalised);
+                if ($forwarded === false) {
+                    return false;
+                }
+
+                $type = (string) $normalised['type'];
+                $messageId = $normalised['messageId'] ?? null;
 
                 if ($type === AGENTIC_CHAT_EVT_TEXT_MESSAGE_START && $messageId !== null) {
                     $assistantBuffers[(string) $messageId] = [
-                        'role' => $event['role'] ?? 'assistant',
-                        'author' => $event['author_name'] ?? $event['authorName'] ?? null,
+                        'role' => $normalised['role'] ?? 'assistant',
+                        'authorName' => $normalised['authorName'] ?? null,
+                        'sourceExecutorId' => $normalised['sourceExecutorId'] ?? null,
+                        'authorPersonaKey' => $normalised['authorPersonaKey'] ?? null,
+                        'authorSlot' => $normalised['authorSlot'] ?? null,
                         'text' => '',
                     ];
                 } elseif ($type === AGENTIC_CHAT_EVT_TEXT_MESSAGE_CONTENT && $messageId !== null) {
                     if (!isset($assistantBuffers[(string) $messageId])) {
                         $assistantBuffers[(string) $messageId] = [
                             'role' => 'assistant',
-                            'author' => $event['author_name'] ?? null,
+                            'authorName' => $normalised['authorName'] ?? null,
+                            'sourceExecutorId' => $normalised['sourceExecutorId'] ?? null,
+                            'authorPersonaKey' => $normalised['authorPersonaKey'] ?? null,
+                            'authorSlot' => $normalised['authorSlot'] ?? null,
                             'text' => '',
                         ];
                     }
-                    $assistantBuffers[(string) $messageId]['text'] .= (string) ($event['delta'] ?? '');
+                    // Refresh speaker metadata in case the backend only
+                    // names the executor on TEXT_MESSAGE_CONTENT.
+                    foreach (['authorName', 'sourceExecutorId', 'authorPersonaKey', 'authorSlot'] as $k) {
+                        if (empty($assistantBuffers[(string) $messageId][$k]) && !empty($normalised[$k])) {
+                            $assistantBuffers[(string) $messageId][$k] = $normalised[$k];
+                        }
+                    }
+                    $assistantBuffers[(string) $messageId]['text'] .= (string) ($normalised['delta'] ?? '');
                 } elseif ($type === AGENTIC_CHAT_EVT_TEXT_MESSAGE_END && $messageId !== null) {
                     $buffer = $assistantBuffers[(string) $messageId] ?? null;
                     if ($buffer && trim($buffer['text']) !== '' && ($buffer['role'] ?? '') !== 'user') {
+                        $context = [
+                            'messageId'        => (string) $messageId,
+                            'runId'            => $normalised['runId'] ?? ($threadRef['last_run_id'] ?? null),
+                            'authorName'       => $buffer['authorName'],
+                            'sourceExecutorId' => $buffer['sourceExecutorId'],
+                            'authorPersonaKey' => $buffer['authorPersonaKey'],
+                            'authorSlot'       => $buffer['authorSlot'],
+                        ];
                         $service->getThreadService()->appendMessage(
                             (int) $threadRef['id_llmConversations'],
                             'assistant',
                             $buffer['text'],
-                            ['author' => $buffer['author'], 'message_id' => $messageId]
+                            $context
                         );
                         if ($service->isCaseCompleteText($buffer['text'])) {
                             $caseClosed = true;
@@ -337,36 +405,38 @@ class AgenticChatService
                     }
                     unset($assistantBuffers[(string) $messageId]);
                 } elseif ($type === 'RUN_FINISHED') {
-                    // Capture HITL interrupts. The AG-UI workflow attaches
-                    // them to the terminal RUN_FINISHED event as an array.
-                    $rawInterrupts = $event['interrupt'] ?? $event['interrupts'] ?? null;
-                    if (is_array($rawInterrupts)) {
-                        foreach ($rawInterrupts as $interrupt) {
-                            if (!is_array($interrupt) || empty($interrupt['id'])) {
+                    // Read the normalised outcome envelope.
+                    $outcome = $normalised['outcome'] ?? null;
+                    if (is_array($outcome) && ($outcome['type'] ?? null) === 'interrupt'
+                        && isset($outcome['interrupts']) && is_array($outcome['interrupts'])) {
+                        foreach ($outcome['interrupts'] as $interrupt) {
+                            if (!is_array($interrupt) || empty($interrupt['interruptId'])) {
                                 continue;
                             }
-                            $pendingInterrupts[] = [
-                                'id' => (string) $interrupt['id'],
-                                'value' => $interrupt['value'] ?? null,
-                            ];
+                            $pendingInterrupts[] = $interrupt;
                         }
                         $awaitingInput = !empty($pendingInterrupts);
                     }
                 } elseif ($type === AGENTIC_CHAT_EVT_RUN_ERROR) {
-                    $lastError = $event['message'] ?? 'Unknown AG-UI error';
+                    $lastError = $normalised['message'] ?? 'Unknown AG-UI error';
                 } elseif ($type === AGENTIC_CHAT_EVT_CUSTOM
-                          && (($event['name'] ?? '') === 'usage')
-                          && isset($event['value']) && is_array($event['value'])) {
-                    $usage['input'] = isset($event['value']['input_token_count']) ? (int) $event['value']['input_token_count'] : $usage['input'];
-                    $usage['output'] = isset($event['value']['output_token_count']) ? (int) $event['value']['output_token_count'] : $usage['output'];
-                    $usage['total'] = isset($event['value']['total_token_count']) ? (int) $event['value']['total_token_count'] : $usage['total'];
+                          && (($normalised['name'] ?? '') === 'usage')
+                          && isset($normalised['value']) && is_array($normalised['value'])) {
+                    $value = $normalised['value'];
+                    $usage['input']  = isset($value['input_token_count'])  ? (int) $value['input_token_count']  : ($usage['input']  ?? null);
+                    $usage['output'] = isset($value['output_token_count']) ? (int) $value['output_token_count'] : ($usage['output'] ?? null);
+                    $usage['total']  = isset($value['total_token_count'])  ? (int) $value['total_token_count']  : ($usage['total']  ?? null);
                 }
             }
 
-            return $continue;
+            return null;
         };
 
-        $result = $client->streamRun($payload, $sseHandler, $cfg['reflect_path']);
+        $rawChunkForwarder = function (string $rawChunk) use ($sseHandler) {
+            return $sseHandler($rawChunk);
+        };
+
+        $result = $client->streamRun($payload, $rawChunkForwarder, $cfg['reflect_path']);
 
         // Drain any final event left in the SSE buffer (e.g. a terminal
         // RUN_FINISHED that arrived without a trailing blank line).

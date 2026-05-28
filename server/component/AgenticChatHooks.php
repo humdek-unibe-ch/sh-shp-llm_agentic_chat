@@ -208,7 +208,7 @@ class AgenticChatHooks extends BaseHooks
      *
      * Storage strategy: the field is stored in
      * `sections_fields_translation.content` as a CSV string of persona
-     * keys (e.g. `mediator,foundational_teacher`). The `<select multiple>`
+     * keys (e.g. `ms_rivera,mr_okafor,ms_chen`). The `<select multiple>`
      * naturally posts each selected option as
      * `fields[name][lang][gender][content][]` and CmsUpdateController
      * implodes that array with commas before persisting (see core
@@ -309,8 +309,8 @@ class AgenticChatHooks extends BaseHooks
                 continue;
             }
             $label = $name;
-            if (!empty($persona['role'])) {
-                $label .= ' (' . $this->prettyRoleLabel((string) $persona['role']) . ')';
+            if (!empty($persona['slot_type'])) {
+                $label .= ' (' . $this->prettySlotTypeLabel((string) $persona['slot_type']) . ')';
             }
             if (empty($persona['enabled'])) {
                 $label .= ' — disabled';
@@ -364,16 +364,15 @@ class AgenticChatHooks extends BaseHooks
     }
 
     /**
-     * Convert a `agentic_persona_role_*` lookup code into a friendly
-     * label used in dropdown options.
+     * Convert a slot_type identifier (`foundational` / `inclusive` /
+     * `inquiry`) into a friendly title-cased label.
      *
-     * @param string $code Role lookup code.
+     * @param string $slotType Slot type identifier.
      * @return string
      */
-    private function prettyRoleLabel($code)
+    private function prettySlotTypeLabel($slotType)
     {
-        $code = preg_replace('/^agentic_persona_role_/', '', (string) $code);
-        return ucwords(str_replace('_', ' ', (string) $code));
+        return ucwords(str_replace('_', ' ', (string) $slotType));
     }
 
     /**

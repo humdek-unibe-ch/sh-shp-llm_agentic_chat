@@ -68,6 +68,23 @@ trait AgenticChatJsonResponseTrait
      * Any output buffers active at this point are *discarded* (not
      * flushed) so a warning emitted upstream can't sneak into the SSE
      * stream and corrupt the first event the React parser sees.
+     *
+     * Hardening notes:
+     *   - `X-Accel-Buffering: no` covers Nginx.
+     *   - `Content-Encoding: identity` tells any compressing layer
+     *     (Apache mod_deflate, gzip, brotli, etc.) NOT to wait for a
+     *     full block before sending bytes downstream. Without this the
+     *     React client may not see any TEXT_MESSAGE_CONTENT deltas
+     *     until the full response is buffered.
+     *   - `apache_setenv('no-gzip', '1')` is the Apache-specific knob
+     *     to disable mod_deflate on this response when running under
+     *     mod_php.
+     *   - We then emit a ~2KB SSE comment as initial padding because
+     *     some browsers/proxies wait for a couple of KB of body before
+     *     starting to render an SSE stream (Chrome historically waits
+     *     for ~1KB; Apache buffers ~2KB by default). Sending the
+     *     padding before the first real event guarantees the user
+     *     sees deltas the moment they arrive.
      */
     protected function startSseStream()
     {
@@ -77,13 +94,35 @@ trait AgenticChatJsonResponseTrait
             header('Pragma: no-cache');
             header('Expires: 0');
             header('X-Accel-Buffering: no'); // Nginx: disable response buffering.
+            header('Content-Encoding: identity'); // disable gzip/brotli
         }
+
+        // Apache mod_deflate: opt out per-request when running under
+        // mod_php. Safe no-op on PHP-FPM / CLI / Nginx.
+        if (function_exists('apache_setenv')) {
+            @apache_setenv('no-gzip', '1');
+            @apache_setenv('dont-vary', '1');
+        }
+
+        // Defeat ini-level zlib output compression which would
+        // otherwise re-buffer everything despite the headers above.
+        if (function_exists('ini_set')) {
+            @ini_set('zlib.output_compression', '0');
+        }
+
         // Drop any output buffers (including the one we may have started
         // in dispatch() to capture warnings) - we want raw passthrough.
         while (ob_get_level() > 0) {
             @ob_end_clean();
         }
         @ob_implicit_flush(true);
+
+        // SSE padding comment: ~2KB of ":" lines so any intermediate
+        // buffer fills up immediately. Browsers ignore comment lines
+        // ("data:"-less lines starting with ":"), so this is invisible
+        // to the React parser but reliably "primes" the stream.
+        echo ':' . str_repeat(' ', 2048) . "\n\n";
+        @flush();
     }
 
     /**

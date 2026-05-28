@@ -7,6 +7,19 @@ import type { Persona, PersonaSlotMap } from '../../types';
 import { indexPersonas } from '../../utils/persona-mapping';
 import { isImageAvatar, resolveAvatarUrl } from '../../utils/avatar';
 
+/**
+ * Friendly labels for the positional backend slots used by the
+ * FoResTCHAT reflection workflow. The keys here mirror the slot ids
+ * the PHP side puts into `personaSlotMap` and the
+ * `AGENTIC_CHAT_BACKEND_SLOTS` constant.
+ */
+const SLOT_LABELS: Record<string, string> = {
+  mediator: 'Mediator',
+  persona_1: 'Teacher 1',
+  persona_2: 'Teacher 2',
+  persona_3: 'Teacher 3',
+};
+
 export interface PersonaStripProps {
   personas: Persona[];
   slotMap: PersonaSlotMap;
@@ -41,12 +54,13 @@ export const PersonaStrip: React.FC<PersonaStripProps> = ({
       {slotted.map(({ slot, persona }) => {
         const isActive = activePersonaKey === persona.key;
         const avatarIsImage = isImageAvatar(persona.avatar);
+        const slotLabel = SLOT_LABELS[slot] ?? slot;
         return (
           <div
             key={persona.key}
             role="listitem"
             className={`agentic-personas__item${isActive ? ' is-active' : ''}`}
-            title={`${persona.name} — ${slot}`}
+            title={`${persona.name} — ${slotLabel}`}
             style={{ borderColor: persona.color || undefined }}
           >
             <span

@@ -1,13 +1,18 @@
 /**
- * usePendingInterrupts — keeps a small list of HITL interrupts the user
+ * usePendingInterrupts — keeps the list of HITL interrupts the user
  * needs to answer before the AG-UI run can resume.
  *
- * The list is populated from two sources:
- *   1. Initial seed from `agenticChatThreads.pending_interrupts` on page
- *      load (`setInitial`), so a refresh in the middle of a HITL pause
- *      does not drop the resume context.
- *   2. AG-UI events streamed during a run — primarily RUN_FINISHED with
- *      an `interrupt` array, plus the legacy CUSTOM('interrupt') variant.
+ * Every interrupt that lands in state is already in the strict
+ * normalised shape (`PendingInterrupt`) the PHP bridge emits. The hook
+ * is therefore a thin "accumulate + filter by id" reducer over the
+ * stream events plus the initial server seed.
+ *
+ * Population sources:
+ *   1. Initial seed from `agenticChatThreads.pending_interrupts` on
+ *      page load (`setInitial`), so a refresh in the middle of a HITL
+ *      pause does not drop the resume context.
+ *   2. RUN_FINISHED with `outcome.type === 'interrupt'` streamed during
+ *      a run.
  *
  * A new run that does NOT pause on a HITL clears the list automatically
  * via the explicit `clear()` call from the caller; we deliberately do
@@ -16,10 +21,7 @@
  */
 import { useCallback, useState } from 'react';
 import type { AgUiEvent, PendingInterrupt } from '../types';
-import {
-  extractInterruptsFromRunFinished,
-  tryParseInterrupt,
-} from '../utils/ag-ui-events';
+import { extractInterruptsFromRunFinished } from '../utils/ag-ui-events';
 
 export interface UsePendingInterruptsResult {
   interrupts: PendingInterrupt[];
@@ -36,27 +38,14 @@ export function usePendingInterrupts(): UsePendingInterruptsResult {
   const [interrupts, setInterrupts] = useState<PendingInterrupt[]>([]);
 
   const handleAgUiEvent = useCallback((event: AgUiEvent) => {
-    // RUN_FINISHED can carry MULTIPLE interrupts (rare, but allowed by
-    // the AG-UI spec); extract them all instead of just the first.
-    if (event.type === 'RUN_FINISHED') {
-      const all = extractInterruptsFromRunFinished(event);
-      if (all.length > 0) {
-        setInterrupts((prev) => {
-          const seen = new Set(prev.map((i) => i.interruptId));
-          const dedup = all.filter((i) => !seen.has(i.interruptId));
-          return [...prev, ...dedup];
-        });
-      }
-      return;
-    }
-
-    const parsed = tryParseInterrupt(event);
-    if (parsed) {
-      setInterrupts((prev) => {
-        if (prev.some((i) => i.interruptId === parsed.interruptId)) return prev;
-        return [...prev, parsed];
-      });
-    }
+    if (event.type !== 'RUN_FINISHED') return;
+    const all = extractInterruptsFromRunFinished(event);
+    if (all.length === 0) return;
+    setInterrupts((prev) => {
+      const seen = new Set(prev.map((i) => i.interruptId));
+      const dedup = all.filter((i) => !seen.has(i.interruptId));
+      return [...prev, ...dedup];
+    });
   }, []);
 
   const resolve = useCallback((interruptId: string) => {

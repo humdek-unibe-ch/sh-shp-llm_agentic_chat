@@ -4,15 +4,34 @@
 
 /* ---------- Personas ----------------------------------------------------- */
 
+/**
+ * Persona slot type — one of the three teacher slots supported by the
+ * Python reflection backend. The mediator persona is fixed in the
+ * backend and is therefore NOT a slot type.
+ */
+export type PersonaSlotType = 'foundational' | 'inclusive' | 'inquiry';
+
+/** Ordered list of slot types used in editor dropdowns / strip rendering. */
+export const PERSONA_SLOT_TYPES: PersonaSlotType[] = ['foundational', 'inclusive', 'inquiry'];
+
+/**
+ * Persona variant authored in the admin library.
+ *
+ * Every persona is bound to exactly one teacher slot type and provides
+ * the system prompt the backend uses for that slot. The mediator is
+ * NOT modelled here — it is a fixed plugin/UI participant (see
+ * `AgenticChatConfig.mediator`).
+ */
 export interface Persona {
-  /** Stable identifier used in slot maps (slug). */
+  /** Stable internal slug (auto-derived from name, hidden in the editor). */
   key: string;
   /** Display name shown in the UI. */
   name: string;
-  /** Coarse role bucket (mediator/teacher/expert/supporter/other). */
-  role: string;
-  /** Free-form personality summary (display only, surfaced in the persona strip). */
-  personality?: string;
+  /**
+   * Backend slot this persona variant feeds. May be null for the fixed
+   * mediator descriptor which lives outside the slot-type model.
+   */
+  slot_type: PersonaSlotType | null;
   /** System-prompt template. May contain {module_content} placeholders. */
   instructions: string;
   /** Hex color used for badges/avatars. */
@@ -22,13 +41,6 @@ export interface Persona {
   /** Whether this persona is enabled and selectable. */
   enabled: boolean;
 }
-
-export type PersonaRole =
-  | 'agentic_persona_role_mediator'
-  | 'agentic_persona_role_teacher'
-  | 'agentic_persona_role_expert'
-  | 'agentic_persona_role_supporter'
-  | 'agentic_persona_role_other';
 
 /** Map: backend-defined slot -> persona key. */
 export type PersonaSlotMap = Record<string, string | null>;
@@ -67,6 +79,11 @@ export interface AgenticChatConfig {
   showDebug: boolean;
   showPersonaStrip: boolean;
   showRunStatus: boolean;
+  /**
+   * Resolved persona list for this section — the fixed mediator at
+   * index 0 followed by the teacher variants chosen for each slot
+   * type (selection -> fallback resolution happens server-side).
+   */
   personas: Persona[];
   /**
    * Backend slot -> persona key mapping resolved on the PHP side from the
@@ -76,6 +93,15 @@ export interface AgenticChatConfig {
    */
   personaSlotMap: PersonaSlotMap;
   backendSlots: string[];
+  /**
+   * Read-only descriptor for the fixed mediator persona. Mirrors the
+   * `AGENTIC_CHAT_MEDIATOR_PERSONA` constant on the PHP side and is
+   * used by the chat surface to render the mediator's avatar/name
+   * even though it is not part of the editable persona library.
+   */
+  mediator: Persona;
+  /** Allowed teacher slot types (mirrors PERSONA_SLOT_TYPES). */
+  slotTypes: PersonaSlotType[];
   /** Whether the microphone button should be rendered in the input. */
   enableSpeechToText: boolean;
   /** Whisper model identifier sent with each transcription request. */
@@ -112,14 +138,16 @@ export interface ThreadInfo {
   personaSlotMap: PersonaSlotMap | Record<string, never>;
   moduleContent: string | null;
   /**
-   * AG-UI interrupts persisted on the thread row. Populated from the most
-   * recent RUN_FINISHED.interrupt[] payload. Empty when the next user
-   * message should start a fresh run instead of resuming a paused one.
+   * AG-UI interrupts persisted on the thread row.
+   *
+   * The PHP normaliser rewrites the legacy backend payload
+   * (`RUN_FINISHED.interrupt = [{ id, value }]`) into the strict
+   * `PendingInterrupt` shape before persisting it, so a refresh in the
+   * middle of a HITL pause restores the same canonical model the React
+   * chat uses while a run is live. Empty when the next user message
+   * should start a fresh run instead of resuming a paused one.
    */
-  pendingInterrupts: Array<{
-    id: string;
-    value: unknown;
-  }>;
+  pendingInterrupts: PendingInterrupt[];
   /** Convenience flag mirroring `pendingInterrupts.length > 0`. */
   awaitingInput: boolean;
   usage: {
@@ -130,11 +158,41 @@ export interface ThreadInfo {
   conversationId: number;
 }
 
+/**
+ * Normalised speaker metadata attached to every persisted assistant
+ * message and every in-flight streaming bubble. Populated by the PHP
+ * event normaliser when the backend emits `author_name` /
+ * `source_executor_id` on TEXT_MESSAGE_*, and persisted into the
+ * `llmMessages.sent_context` column so the chat surface can pick the
+ * correct avatar / display name even after a page refresh.
+ */
+export interface AssistantSpeakerMetadata {
+  /** Stable backend executor id (e.g. `group_chat_mediator`). */
+  sourceExecutorId?: string;
+  /** Display name reported by the backend (often equal to the executor id). */
+  authorName?: string;
+  /** Backend slot the speaker is bound to (mediator / persona_1 / persona_2 / persona_3). */
+  authorSlot?: string;
+  /** Plugin-side persona key resolved through the section's slot map. */
+  authorPersonaKey?: string;
+  /** AG-UI message id (`TEXT_MESSAGE_START.messageId`). */
+  messageId?: string;
+  /** AG-UI run id this message belongs to. */
+  runId?: string;
+}
+
 export interface ChatMessage {
   id: number;
   role: 'user' | 'assistant' | 'system';
   content: string;
-  context: Record<string, unknown> | null;
+  /**
+   * Free-form metadata persisted alongside the message. For assistant
+   * messages produced by an AG-UI run the normaliser stores the
+   * `AssistantSpeakerMetadata` fields directly here so the renderer
+   * can resolve the avatar/name from the message itself rather than
+   * from transient handoff state.
+   */
+  context: (AssistantSpeakerMetadata & Record<string, unknown>) | null;
   created_at: string;
 }
 
@@ -172,24 +230,37 @@ export type AgUiEventType =
   | 'PROXY_ERROR'
   | 'PROXY_DONE';
 
+/**
+ * RUN_FINISHED outcome envelope (strict AG-UI).
+ *
+ * The legacy FoResTCHAT backend hangs a singular `interrupt` array
+ * directly on the terminal RUN_FINISHED event. The PHP normaliser
+ * rewrites that into an explicit outcome here so the React chat can
+ * pattern-match cleanly on `outcome.type` instead of having to sniff
+ * for a top-level `interrupt[]` array.
+ */
+export type RunFinishedOutcome =
+  | { type: 'interrupt'; interrupts: PendingInterrupt[] }
+  | { type: 'complete' };
+
+/**
+ * AG-UI event shape after the PHP normalisation bridge.
+ *
+ * All identifier fields are camelCase only; `RUN_FINISHED` carries an
+ * `outcome` envelope; interrupts are pre-normalised; and the original
+ * backend payload is preserved under `_rawLegacy` for the debug panel.
+ */
 export interface AgUiEvent {
   type: AgUiEventType | string;
-  /** Camel- or snake-case ids (we normalise both). */
   messageId?: string;
-  message_id?: string;
   threadId?: string;
-  thread_id?: string;
   runId?: string;
-  run_id?: string;
   role?: string;
   delta?: string;
   /** Used by TOOL_CALL_START / handoff_to_<persona>. */
   toolCallName?: string;
-  tool_call_name?: string;
   toolCallId?: string;
-  tool_call_id?: string;
   parentMessageId?: string;
-  parent_message_id?: string;
   /** RUN_ERROR. */
   message?: string;
   code?: string | number;
@@ -198,25 +269,26 @@ export interface AgUiEvent {
   value?: unknown;
   /** MESSAGES_SNAPSHOT. */
   messages?: unknown[];
-  /**
-   * RUN_FINISHED interrupt payload (HITL).
-   *
-   * The AG-UI workflow uses `interrupt` (singular) by convention but
-   * some implementations emit `interrupts`; we accept both shapes.
-   */
-  interrupt?: unknown;
-  interrupts?: unknown;
+  /** RUN_FINISHED — strict AG-UI outcome envelope. */
+  outcome?: RunFinishedOutcome;
+  /** Canonical alias of `outcome.interrupts` when outcome is interrupt. */
+  interrupts?: PendingInterrupt[];
+  /** Speaker metadata copied through by the normaliser. */
+  authorName?: string;
+  sourceExecutorId?: string;
+  authorSlot?: string;
+  authorPersonaKey?: string;
+  /** Original backend payload preserved for the debug surface. */
+  _rawLegacy?: Record<string, unknown>;
   /** Other metadata is permitted but typed loosely. */
   [extra: string]: unknown;
 }
 
 /** A streamed assistant message in flight (or finalised). */
-export interface InFlightMessage {
+export interface InFlightMessage extends AssistantSpeakerMetadata {
   id: string;
   role: 'assistant' | 'user' | 'system';
   text: string;
-  authorPersonaKey?: string;
-  authorPersonaName?: string;
   isComplete: boolean;
   startedAt: number;
   endedAt?: number;
@@ -243,17 +315,52 @@ export type RunStatus =
   | 'completed'
   | 'error';
 
-/** Pending HITL interrupt envelope. */
+/**
+ * Pending HITL interrupt envelope (strict AG-UI, post-normalisation).
+ *
+ * The PHP normaliser turns the legacy backend `{ id, value }` shape into
+ * this strict object so the React chat can render rich interrupt prompt
+ * cards without having to inspect bespoke `agent_response` blobs.
+ *
+ * `rawLegacy` is preserved so the debug panel can show what the backend
+ * actually sent, and so the resume translator on the PHP side can build
+ * the correct legacy resume value for tools that piggy-back on it.
+ */
 export interface PendingInterrupt {
-  /** Stable id for the interrupt so we can resume it. */
+  /** Stable id for the interrupt; this is what `resume[].interruptId` references. */
   interruptId: string;
-  toolCallId?: string;
-  toolCallName?: string;
-  parentMessageId?: string;
-  /** Free-form prompt text for the UI. */
-  prompt?: string;
-  /** Captured args / payload from the backend. */
-  payload?: Record<string, unknown>;
+  /** Coarse category (e.g. `handoff_input` for the FoResTCHAT backend). */
+  reason?: string;
+  /** Human-readable prompt the UI shows in the interrupt card. */
+  message?: string;
+  /** Optional JSON Schema / form schema for structured responses. */
+  responseSchema?: unknown;
+  /** Free-form metadata from the backend (full `value` payload). */
+  metadata?: Record<string, unknown>;
+  /** Backend executor id that raised the interrupt (e.g. `group_chat_mediator`). */
+  sourceExecutorId?: string;
+  /** Display name reported by the backend. */
+  authorName?: string;
+  /** Backend slot derived from the executor id. */
+  authorSlot?: string;
+  /** Plugin-side persona key resolved through the section's slot map. */
+  authorPersonaKey?: string;
+  /** Raw backend interrupt for the debug surface / resume translation. */
+  rawLegacy?: Record<string, unknown>;
+}
+
+/**
+ * Strict AG-UI resume entry sent from the React chat to the PHP proxy.
+ *
+ * The PHP normaliser translates the array of these into the backend's
+ * legacy `{ interrupts: [{ id, value }] }` shape before calling the
+ * upstream `/reflect` endpoint.
+ */
+export interface ResumeEntry {
+  interruptId: string;
+  status: 'resolved' | 'cancelled';
+  /** Free-form payload; the default text builder reads `payload.text`. */
+  payload?: { text?: string } | Record<string, unknown>;
 }
 
 /* ---------- Admin types -------------------------------------------------- */

@@ -11,7 +11,13 @@
 import React, { useState } from 'react';
 import type { Persona } from '../../types';
 import { PersonaRow } from './PersonaRow';
-import { createEmptyPersona, slugifyPersonaKey } from '../../utils/persona-mapping';
+import {
+  createEmptyPersona,
+  formatSlotType,
+  groupPersonasBySlot,
+  instructionsPreview,
+  slugifyPersonaKey,
+} from '../../utils/persona-mapping';
 import { isImageAvatar, resolveAvatarUrl } from '../../utils/avatar';
 import { showConfirm } from '../../utils/confirm';
 
@@ -44,14 +50,6 @@ const Avatar: React.FC<AvatarProps> = ({ persona }) => {
   );
 };
 
-function formatRole(role: string): string {
-  if (!role) return '—';
-  return role
-    .replace(/^agentic_persona_role_/, '')
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 /** PersonaEditor component. */
 export const PersonaEditor: React.FC<PersonaEditorProps> = ({
   personas,
@@ -78,8 +76,13 @@ export const PersonaEditor: React.FC<PersonaEditorProps> = ({
   const updatePersona = (idx: number, patch: Partial<Persona>) => {
     const copy = personas.slice();
     const merged = { ...copy[idx], ...patch };
-    if ((!merged.key || !merged.key.trim()) && merged.name) {
+    // Key is hidden from the editor in v1.1.0+ — always derive it from
+    // the name so renames produce a fresh slug. Duplicate slugs are
+    // suffixed on the PHP side during `parse()`.
+    if (merged.name && merged.name.trim()) {
       merged.key = slugifyPersonaKey(merged.name);
+    } else if (!merged.key) {
+      merged.key = `persona_${idx + 1}`;
     }
     copy[idx] = merged;
     onChange(copy);
@@ -117,6 +120,13 @@ export const PersonaEditor: React.FC<PersonaEditorProps> = ({
 
   const totalErrors = Object.values(errors).reduce((acc, e) => acc + e.length, 0);
 
+  // Slot-coverage hint shown next to the editor header so researchers
+  // immediately see which teacher slots have no enabled variant yet.
+  const enabledBySlot = groupPersonasBySlot(personas.filter((p) => p.enabled));
+  const uncoveredSlots = (Object.keys(enabledBySlot) as Array<keyof typeof enabledBySlot>).filter(
+    (slot) => enabledBySlot[slot].length === 0
+  );
+
   return (
     <div className="card mb-3">
       <div className="card-header d-flex justify-content-between align-items-center">
@@ -132,14 +142,30 @@ export const PersonaEditor: React.FC<PersonaEditorProps> = ({
       </div>
       <div className="card-body">
         <p className="text-muted small mb-3">
-          Personas are stored globally and shared by every <code>agenticChat</code> section.
-          Each section maps a subset of these personas onto the backend's persona slots.
+          Global library of teacher persona variants. Each persona is tagged with a
+          slot type (<code>foundational</code> / <code>inclusive</code> / <code>inquiry</code>)
+          and feeds the matching backend slot. The mediator persona is fixed in the
+          backend and is not configurable here.
         </p>
 
         {totalErrors > 0 && (
           <div className="alert alert-warning small py-2 mb-3" role="alert">
             <i className="fa fa-exclamation-triangle mr-1"></i>
             {totalErrors} validation error{totalErrors === 1 ? '' : 's'} — fix before saving.
+          </div>
+        )}
+
+        {uncoveredSlots.length > 0 && (
+          <div className="alert alert-info small py-2 mb-3" role="status">
+            <i className="fa fa-info-circle mr-1"></i>
+            No enabled persona for slot{uncoveredSlots.length === 1 ? '' : 's'}:{' '}
+            {uncoveredSlots.map((s, i) => (
+              <React.Fragment key={s}>
+                <strong>{formatSlotType(s)}</strong>
+                {i < uncoveredSlots.length - 1 ? ', ' : ''}
+              </React.Fragment>
+            ))}
+            . The backend will fall back to its built-in default for these slots.
           </div>
         )}
 
@@ -166,6 +192,7 @@ export const PersonaEditor: React.FC<PersonaEditorProps> = ({
           }
           const personaErrs = errors[idx] || [];
           const cardClass = `persona-summary mb-2 p-3 border rounded bg-light${personaErrs.length ? ' persona-summary--invalid' : ''}`;
+          const preview = instructionsPreview(persona.instructions);
           return (
             <div key={`row-${idx}`} className={cardClass}>
               <div className="d-flex align-items-center">
@@ -175,6 +202,9 @@ export const PersonaEditor: React.FC<PersonaEditorProps> = ({
                     <strong className="text-truncate">
                       {persona.name || <em className="text-muted">Untitled persona</em>}
                     </strong>
+                    <span className="badge badge-light border ml-2">
+                      {formatSlotType(persona.slot_type)}
+                    </span>
                     {!persona.enabled && (
                       <span className="badge badge-secondary ml-2">disabled</span>
                     )}
@@ -182,15 +212,11 @@ export const PersonaEditor: React.FC<PersonaEditorProps> = ({
                       <span className="badge badge-warning ml-2">{personaErrs.length} error{personaErrs.length === 1 ? '' : 's'}</span>
                     )}
                   </div>
-                  <div className="text-muted small mt-1">
-                    <code className="mr-2">{persona.key || '—'}</code>
-                    <span>{formatRole(persona.role)}</span>
-                    {persona.personality && (
-                      <span className="d-block d-md-inline ml-md-2 mt-1 mt-md-0">
-                        — {persona.personality}
-                      </span>
-                    )}
-                  </div>
+                  {preview && (
+                    <div className="text-muted small mt-1 text-truncate">
+                      {preview}
+                    </div>
+                  )}
                 </div>
                 {!disabled && (
                   <div className="btn-group btn-group-sm ml-2">

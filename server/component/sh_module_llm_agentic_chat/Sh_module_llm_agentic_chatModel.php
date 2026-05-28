@@ -124,11 +124,13 @@ class Sh_module_llm_agentic_chatModel extends BaseModel
                         'name' => 'agentic_chat_personas',
                         'type' => 'agentic-personas',
                         'label' => 'Persona Library',
-                        'help' => 'Global persona library used by all agenticChat sections. Each persona has key, name, role, instructions, color/avatar and an enabled flag.',
+                        'help' => 'Global library of teacher persona variants. Each persona is tagged with a slot type (foundational / inclusive / inquiry) and is sent to the corresponding backend slot. The mediator persona is fixed in the backend and is not editable here.',
                         'value' => $this->personaService->encode($personas),
                         'parsed' => $personas,
-                        'roleOptions' => $this->getPersonaRoleOptions(),
+                        'slotTypeOptions' => $this->getSlotTypeOptions(),
                         'backendSlots' => AGENTIC_CHAT_BACKEND_SLOTS,
+                        'slotTypes' => AGENTIC_CHAT_PERSONA_SLOT_TYPES,
+                        'mediator' => AGENTIC_CHAT_MEDIATOR_PERSONA,
                     ],
                 ],
             ],
@@ -162,35 +164,27 @@ class Sh_module_llm_agentic_chatModel extends BaseModel
     }
 
     /**
-     * Persona-role options loaded from `lookups`. Matches the lookup values
-     * inserted by v1.0.0.sql (type_code = agenticChatPersonaRole).
+     * Slot-type options shown in the persona editor dropdown. Driven by
+     * the `AGENTIC_CHAT_PERSONA_SLOT_TYPES` constant so backend, plugin
+     * and React UI stay in lock-step.
      *
      * @return array<int, array{value:string,label:string}>
      */
-    private function getPersonaRoleOptions()
+    private function getSlotTypeOptions()
     {
-        try {
-            $rows = $this->db->query_db(
-                "SELECT lookup_code, lookup_value FROM lookups
-                  WHERE type_code = ?
-                  ORDER BY lookup_value",
-                [AGENTIC_CHAT_LOOKUP_TYPE_PERSONA_ROLE]
-            );
-            $options = [];
-            foreach ($rows as $row) {
-                $options[] = [
-                    'value' => $row['lookup_code'],
-                    'label' => $row['lookup_value'],
-                ];
-            }
-            return $options;
-        } catch (Exception $e) {
-            return [
-                ['value' => AGENTIC_CHAT_PERSONA_ROLE_TEACHER, 'label' => 'Teacher'],
-                ['value' => AGENTIC_CHAT_PERSONA_ROLE_EXPERT, 'label' => 'Expert'],
-                ['value' => AGENTIC_CHAT_PERSONA_ROLE_OTHER, 'label' => 'Other'],
+        $labels = [
+            AGENTIC_CHAT_SLOT_TYPE_FOUNDATIONAL => 'Foundational',
+            AGENTIC_CHAT_SLOT_TYPE_INCLUSIVE    => 'Inclusive',
+            AGENTIC_CHAT_SLOT_TYPE_INQUIRY      => 'Inquiry',
+        ];
+        $options = [];
+        foreach (AGENTIC_CHAT_PERSONA_SLOT_TYPES as $slotType) {
+            $options[] = [
+                'value' => $slotType,
+                'label' => $labels[$slotType] ?? ucfirst($slotType),
             ];
         }
+        return $options;
     }
 
     /**

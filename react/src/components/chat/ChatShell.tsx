@@ -13,7 +13,7 @@
  *
  * @module components/chat/ChatShell
  */
-import React from 'react';
+import React, { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -23,6 +23,7 @@ import type {
   AgenticChatLabels,
   ChatMessage,
   InFlightMessage,
+  PendingInterrupt,
   Persona,
   PersonaSlotMap,
   RunStatus,
@@ -33,6 +34,8 @@ import { PersonaStrip } from './PersonaStrip';
 import { RunStatusBadge } from './RunStatusBadge';
 import { ThreadActions } from './ThreadActions';
 import { DebugEventPanel } from './DebugEventPanel';
+import { InterruptPromptCard } from './InterruptPromptCard';
+import { indexPersonas } from '../../utils/persona-mapping';
 import { classifyChatError } from '../../utils/error-classify';
 
 /**
@@ -107,6 +110,8 @@ export interface ChatShellProps {
   showDebug: boolean;
   events: AgUiEvent[];
   autoStartToken: string;
+  /** Normalised pending HITL interrupts — rendered as prompt cards. */
+  pendingInterrupts: PendingInterrupt[];
 
   /* Speech-to-text wiring (forwarded to MessageInput). */
   enableSpeechToText: boolean;
@@ -137,6 +142,7 @@ export const ChatShell: React.FC<ChatShellProps> = ({
   showDebug,
   events,
   autoStartToken,
+  pendingInterrupts,
   enableSpeechToText,
   speechToTextModel,
   sectionId,
@@ -146,6 +152,19 @@ export const ChatShell: React.FC<ChatShellProps> = ({
   onReset,
 }) => {
   const inputDisabled = isStreaming || caseClosed || status === 'starting';
+  const personasByKey = useMemo(() => indexPersonas(personas), [personas]);
+  // Most recent assistant message text — used to suppress an
+  // interrupt card body that just restates what the user has already
+  // read in the message stream above the card.
+  const lastAssistantMessage = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i];
+      if (m.role === 'assistant' && typeof m.content === 'string' && m.content.trim()) {
+        return m.content;
+      }
+    }
+    return undefined;
+  }, [messages]);
 
   return (
     <section className="agentic-chat card border-0 shadow-sm">
@@ -214,6 +233,25 @@ export const ChatShell: React.FC<ChatShellProps> = ({
           autoStartToken={autoStartToken}
           isStreaming={isStreaming}
         />
+        {status === 'awaiting_input' && pendingInterrupts.length > 0 && (
+          <div className="agentic-chat__interrupts">
+            {pendingInterrupts.map((interrupt, idx) => {
+              const personaKey = interrupt.authorPersonaKey;
+              const persona = personaKey ? personasByKey[personaKey] ?? null : null;
+              return (
+                <InterruptPromptCard
+                  key={interrupt.interruptId}
+                  interrupt={interrupt}
+                  persona={persona}
+                  showDebug={showDebug}
+                  index={idx + 1}
+                  total={pendingInterrupts.length}
+                  lastAssistantMessage={lastAssistantMessage}
+                />
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {errorMessage && (

@@ -62,26 +62,136 @@ define('AGENTIC_CHAT_CASE_COMPLETE_MARKER', 'Case complete.');
 /* =========================================================================
  * PERSONA SLOT MAPPING
  *
- * The current backend supports exactly three persona instruction slots
- * (foundational / inclusive / inquiry) plus the mediator. The plugin
- * stores personas globally as an array keyed by persona key, and maps a
- * subset of them onto these slots when configuring a thread.
+ * The FoResTCHAT Python backend exposes three positional teacher
+ * persona slots (persona_1 / persona_2 / persona_3) plus a fixed,
+ * non-configurable mediator. For each of the three positional slots
+ * /reflect/configure expects a NAME and an INSTRUCTIONS string, and
+ * the run-time agents are named `persona_1_teacher`, `persona_2_teacher`,
+ * `persona_3_teacher` accordingly.
+ *
+ * Personas are still authored as variants of three semantic slot types
+ * (foundational / inclusive / inquiry) so the admin keeps an intuitive
+ * authoring model. Those slot types map 1:1 onto the positional
+ * backend slots:
+ *
+ *   foundational  ->  persona_1
+ *   inclusive     ->  persona_2
+ *   inquiry       ->  persona_3
+ *
+ * A section can pick at most one persona per slot type; when no
+ * override is provided the plugin falls back to the first enabled
+ * global persona for that slot type.
  * ========================================================================= */
 
+/* Backend slot identifiers (positional; sent to /reflect/configure as
+ * `<slot>_name` + `<slot>_instructions`). */
 define('AGENTIC_CHAT_SLOT_MEDIATOR', 'mediator');
-define('AGENTIC_CHAT_SLOT_FOUNDATIONAL', 'foundational_instructions');
-define('AGENTIC_CHAT_SLOT_INCLUSIVE', 'inclusive_instructions');
-define('AGENTIC_CHAT_SLOT_INQUIRY', 'inquiry_instructions');
+define('AGENTIC_CHAT_SLOT_PERSONA_1', 'persona_1');
+define('AGENTIC_CHAT_SLOT_PERSONA_2', 'persona_2');
+define('AGENTIC_CHAT_SLOT_PERSONA_3', 'persona_3');
 
 /**
- * Ordered list of supported backend persona slots. Used by the config UI
- * to render the slot-mapping dropdowns.
+ * Ordered list of all backend persona slots (used for display by the
+ * persona strip / chat surface). The mediator slot is included for UI
+ * attribution only; it is NEVER part of the /reflect/configure body
+ * because the Python backend does not accept a configurable mediator
+ * prompt.
  */
 define('AGENTIC_CHAT_BACKEND_SLOTS', [
     AGENTIC_CHAT_SLOT_MEDIATOR,
-    AGENTIC_CHAT_SLOT_FOUNDATIONAL,
-    AGENTIC_CHAT_SLOT_INCLUSIVE,
-    AGENTIC_CHAT_SLOT_INQUIRY,
+    AGENTIC_CHAT_SLOT_PERSONA_1,
+    AGENTIC_CHAT_SLOT_PERSONA_2,
+    AGENTIC_CHAT_SLOT_PERSONA_3,
+]);
+
+/* =========================================================================
+ * PERSONA SLOT TYPES (admin / data model)
+ *
+ * The admin authors persona variants tagged with one of these slot
+ * types. The plugin maps each slot type 1:1 onto a positional backend
+ * slot (see AGENTIC_CHAT_SLOT_TYPE_TO_BACKEND_SLOT below). Anything
+ * not in this list (e.g. legacy roles like "expert", "other") is
+ * rejected by the persona normaliser.
+ * ========================================================================= */
+
+define('AGENTIC_CHAT_SLOT_TYPE_FOUNDATIONAL', 'foundational');
+define('AGENTIC_CHAT_SLOT_TYPE_INCLUSIVE', 'inclusive');
+define('AGENTIC_CHAT_SLOT_TYPE_INQUIRY', 'inquiry');
+
+/** All allowed slot types for persona variants. */
+define('AGENTIC_CHAT_PERSONA_SLOT_TYPES', [
+    AGENTIC_CHAT_SLOT_TYPE_FOUNDATIONAL,
+    AGENTIC_CHAT_SLOT_TYPE_INCLUSIVE,
+    AGENTIC_CHAT_SLOT_TYPE_INQUIRY,
+]);
+
+/**
+ * Slot type -> positional backend slot translation.
+ *
+ * Keep this mapping in lock-step with the React `SLOT_TYPE_OPTIONS`
+ * AND with the executor-id table in `AgenticChatEventNormalizer`
+ * (which resolves `persona_<N>_teacher` -> the matching slot key).
+ */
+define('AGENTIC_CHAT_SLOT_TYPE_TO_BACKEND_SLOT', [
+    AGENTIC_CHAT_SLOT_TYPE_FOUNDATIONAL => AGENTIC_CHAT_SLOT_PERSONA_1,
+    AGENTIC_CHAT_SLOT_TYPE_INCLUSIVE    => AGENTIC_CHAT_SLOT_PERSONA_2,
+    AGENTIC_CHAT_SLOT_TYPE_INQUIRY      => AGENTIC_CHAT_SLOT_PERSONA_3,
+]);
+
+/**
+ * Hard-coded fallback labels and prompts used when a positional slot
+ * has no persona assigned (the backend's `/reflect/configure` rejects
+ * empty names because `persona_<N>_name` has `minLength: 1`).
+ *
+ * Indexed by positional backend slot key. The plugin emits these
+ * defaults so a partially-configured library still produces a valid
+ * configure payload; the resulting teacher will simply behave like a
+ * generic placeholder until the admin authors a real persona for the
+ * matching slot type.
+ */
+define('AGENTIC_CHAT_SLOT_DEFAULTS', [
+    AGENTIC_CHAT_SLOT_PERSONA_1 => [
+        'name'         => 'Teacher 1',
+        'instructions' => 'You are a foundational-knowledge primary-school teacher.',
+    ],
+    AGENTIC_CHAT_SLOT_PERSONA_2 => [
+        'name'         => 'Teacher 2',
+        'instructions' => 'You are an inclusive-pedagogy primary-school teacher.',
+    ],
+    AGENTIC_CHAT_SLOT_PERSONA_3 => [
+        'name'         => 'Teacher 3',
+        'instructions' => 'You are an inquiry-based primary-school teacher.',
+    ],
+]);
+
+/* =========================================================================
+ * FIXED MEDIATOR METADATA
+ *
+ * The mediator persona is hard-coded in the Python backend and cannot
+ * be customised through /reflect/configure. The plugin still needs
+ * display metadata (avatar, color, name) for the chat UI when the
+ * mediator speaks. Researchers do NOT see this in the admin editor.
+ * ========================================================================= */
+
+define('AGENTIC_CHAT_MEDIATOR_KEY', 'mediator');
+define('AGENTIC_CHAT_MEDIATOR_NAME', 'Mediator');
+define('AGENTIC_CHAT_MEDIATOR_AVATAR', '/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/mediator.svg');
+define('AGENTIC_CHAT_MEDIATOR_COLOR', '#495057');
+
+/**
+ * Read-only persona descriptor for the mediator. Exposed to the React
+ * chat through the `mediator` field of the section config so the
+ * persona strip, message bubbles and avatars render consistently
+ * without a database row.
+ */
+define('AGENTIC_CHAT_MEDIATOR_PERSONA', [
+    'key'          => AGENTIC_CHAT_MEDIATOR_KEY,
+    'name'         => AGENTIC_CHAT_MEDIATOR_NAME,
+    'slot_type'    => null, // mediator is not a backend slot type
+    'instructions' => '',   // not sent to the backend
+    'color'        => AGENTIC_CHAT_MEDIATOR_COLOR,
+    'avatar'       => AGENTIC_CHAT_MEDIATOR_AVATAR,
+    'enabled'      => true,
 ]);
 
 /* =========================================================================

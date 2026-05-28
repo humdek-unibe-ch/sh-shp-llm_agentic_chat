@@ -159,9 +159,9 @@ class AgenticChatModel extends StyleModel
      * Storage format: the CMS persona multi-select posts each option
      * separately (`fields[name][lang][gender][content][]`). The core
      * `CmsUpdateController` then `implode(',', …)`s the array into a
-     * CSV string before persistence (e.g. `mediator,foundational_teacher`).
+     * CSV string before persistence (e.g. `ms_rivera,mr_okafor,ms_chen`).
      * For backward compatibility we also accept the legacy JSON array
-     * format (`["mediator","foundational_teacher"]`) and pre-decoded
+     * format (`["ms_rivera","mr_okafor"]`) and pre-decoded
      * arrays from `get_db_field`.
      *
      * @return array<int, string> Persona keys (deduplicated, in selection order).
@@ -199,104 +199,58 @@ class AgenticChatModel extends StyleModel
 
     /**
      * Return the personas the React UI should render in the strip /
-     * message bubbles. When the section's selection is empty we fall
-     * back to every enabled persona from the global library so existing
-     * sections keep working without explicit configuration.
+     * message bubbles. This is the **resolved** set: the section's
+     * selected personas (where they map to a known slot type) plus the
+     * fallback global persona for each slot type the section did not
+     * pick. The fixed mediator is appended separately so the chat
+     * surface can render its avatar/name.
      *
      * @return array<int, array<string, mixed>>
      */
     public function getActivePersonas()
     {
-        $globalPersonas = $this->agenticService->getGlobalConfig()['personas'];
-        $selectedKeys = $this->getSelectedPersonaKeys();
+        $slotPersonas = $this->getResolvedSlotPersonas();
 
-        if (empty($selectedKeys)) {
-            return array_values(array_filter($globalPersonas, static function ($persona) {
-                return !empty($persona['enabled']);
-            }));
-        }
+        // Append the fixed mediator descriptor first so it shows up at
+        // the start of the persona strip.
+        $personas = [AGENTIC_CHAT_MEDIATOR_PERSONA];
 
-        $byKey = [];
-        foreach ($globalPersonas as $persona) {
-            if (isset($persona['key'])) {
-                $byKey[$persona['key']] = $persona;
+        foreach (AGENTIC_CHAT_PERSONA_SLOT_TYPES as $slotType) {
+            if (isset($slotPersonas[$slotType])) {
+                $personas[] = $slotPersonas[$slotType];
             }
         }
-
-        $active = [];
-        foreach ($selectedKeys as $key) {
-            if (isset($byKey[$key]) && !empty($byKey[$key]['enabled'])) {
-                $active[] = $byKey[$key];
-            }
-        }
-        return $active;
+        return $personas;
     }
 
     /**
-     * Build the backend slot-map from the active personas. Each persona's
-     * `role` is mapped to one of the four AG-UI backend slots
-     * (mediator / foundational / inclusive / inquiry). When several
-     * personas claim the same slot the first one wins (in selection order).
+     * Resolve teacher slot types to global persona objects using the
+     * section's selection + first-enabled fallback. Cached per request.
      *
-     * Mapping rules:
-     *   - role = mediator                                 -> slot mediator
-     *   - role = teacher AND key contains "foundational"  -> foundational_instructions
-     *   - role = teacher AND key contains "inclusive"     -> inclusive_instructions
-     *   - role = teacher AND key contains "inquiry"       -> inquiry_instructions
-     *   - role = teacher (otherwise)                      -> first free teacher slot
-     *   - other roles                                     -> ignored (no backend slot today)
+     * @return array<string, array<string, mixed>>
+     */
+    public function getResolvedSlotPersonas()
+    {
+        $globalPersonas = $this->agenticService->getGlobalConfig()['personas'];
+        $selectedKeys = $this->getSelectedPersonaKeys();
+        return $this->agenticService
+            ->getPersonaService()
+            ->resolveSlotPersonas($globalPersonas, $selectedKeys);
+    }
+
+    /**
+     * Build the backend slot -> persona key map for this section.
+     * Mediator always points to the fixed mediator key; teacher slots
+     * point to the resolved persona key (selection -> fallback ->
+     * unassigned).
      *
-     * @return array<string, string> Slot -> persona key.
+     * @return array<string, string>
      */
     public function buildBackendSlotMap()
     {
-        $slotMap = [];
-        $teacherSlots = [
-            AGENTIC_CHAT_SLOT_FOUNDATIONAL,
-            AGENTIC_CHAT_SLOT_INCLUSIVE,
-            AGENTIC_CHAT_SLOT_INQUIRY,
-        ];
-        $hintMap = [
-            'foundational' => AGENTIC_CHAT_SLOT_FOUNDATIONAL,
-            'inclusive'    => AGENTIC_CHAT_SLOT_INCLUSIVE,
-            'inquiry'      => AGENTIC_CHAT_SLOT_INQUIRY,
-        ];
-
-        foreach ($this->getActivePersonas() as $persona) {
-            $key  = (string) ($persona['key'] ?? '');
-            $role = (string) ($persona['role'] ?? '');
-            if ($key === '') {
-                continue;
-            }
-
-            if ($role === AGENTIC_CHAT_PERSONA_ROLE_MEDIATOR
-                && !isset($slotMap[AGENTIC_CHAT_SLOT_MEDIATOR])) {
-                $slotMap[AGENTIC_CHAT_SLOT_MEDIATOR] = $key;
-                continue;
-            }
-
-            if ($role === AGENTIC_CHAT_PERSONA_ROLE_TEACHER) {
-                $assigned = false;
-                foreach ($hintMap as $needle => $slot) {
-                    if (!isset($slotMap[$slot]) && stripos($key, $needle) !== false) {
-                        $slotMap[$slot] = $key;
-                        $assigned = true;
-                        break;
-                    }
-                }
-                if ($assigned) {
-                    continue;
-                }
-                foreach ($teacherSlots as $slot) {
-                    if (!isset($slotMap[$slot])) {
-                        $slotMap[$slot] = $key;
-                        break;
-                    }
-                }
-            }
-        }
-
-        return $slotMap;
+        return $this->agenticService
+            ->getPersonaService()
+            ->buildBackendSlotKeyMap($this->getResolvedSlotPersonas());
     }
 
     /* =========================================================================
@@ -340,9 +294,14 @@ class AgenticChatModel extends StyleModel
             'showDebug'          => $this->isDebugVisible(),
             'showPersonaStrip'   => $this->isPersonaStripVisible(),
             'showRunStatus'      => $this->isRunStatusVisible(),
+            // `personas` already includes the fixed mediator at index 0
+            // followed by the resolved teacher variants, so the chat UI
+            // can look any speaker up by key in a single array.
             'personas'           => $this->getActivePersonas(),
             'personaSlotMap'     => $this->buildBackendSlotMap(),
             'backendSlots'       => AGENTIC_CHAT_BACKEND_SLOTS,
+            'mediator'           => AGENTIC_CHAT_MEDIATOR_PERSONA,
+            'slotTypes'          => AGENTIC_CHAT_PERSONA_SLOT_TYPES,
             'enableSpeechToText' => $this->isSpeechToTextEnabled(),
             'speechToTextModel'  => $this->getSpeechToTextModel(),
             'labels'             => $this->getLabels(),

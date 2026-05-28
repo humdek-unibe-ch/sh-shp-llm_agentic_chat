@@ -7,7 +7,7 @@
  * the thread.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AgUiEvent } from '../types';
+import type { AgUiEvent, ResumeEntry } from '../types';
 import { SseParser } from '../utils/sse-parser';
 
 export interface UseAgUiStreamOptions {
@@ -26,7 +26,12 @@ export interface UseAgUiStreamResult {
 
 export interface StartStreamParams {
   message?: string;
-  resume?: Record<string, unknown> | null;
+  /**
+   * Strict-AG-UI resume payload. The PHP bridge translates this back
+   * into the backend's legacy `{ interrupts: [{ id, value }] }` shape
+   * before calling `/reflect`.
+   */
+  resume?: ResumeEntry[] | null;
 }
 
 export function useAgUiStream({
@@ -62,7 +67,9 @@ export function useAgUiStream({
     body.set('action', 'stream_run');
     body.set('section_id', String(sectionId));
     if (typeof message === 'string') body.set('message', message);
-    if (resume && typeof resume === 'object') body.set('resume', JSON.stringify(resume));
+    if (Array.isArray(resume) && resume.length > 0) {
+      body.set('resume', JSON.stringify(resume));
+    }
 
     let resp: Response;
     try {
