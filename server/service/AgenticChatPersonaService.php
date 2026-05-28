@@ -197,11 +197,22 @@ class AgenticChatPersonaService
      */
     public function resolveSlotPersonas(array $personas, array $selectedKeys = [])
     {
+        // The mediator key is reserved by the backend's hard-coded
+        // mediator agent and must NEVER be assigned to a teacher slot.
+        // Personas authored with key === AGENTIC_CHAT_MEDIATOR_KEY would
+        // otherwise steal the foundational slot, displacing a real
+        // teacher and leaving persona_1 with mediator-like instructions
+        // (which makes the corresponding teacher agent defer indefinitely
+        // and produce a chat where only the mediator ever speaks).
         $byKey = [];
         foreach ($personas as $persona) {
-            if (isset($persona['key'])) {
-                $byKey[$persona['key']] = $persona;
+            if (!isset($persona['key'])) {
+                continue;
             }
+            if ($persona['key'] === AGENTIC_CHAT_MEDIATOR_KEY) {
+                continue;
+            }
+            $byKey[$persona['key']] = $persona;
         }
 
         /** @var array<string, array> $resolved */
@@ -209,6 +220,9 @@ class AgenticChatPersonaService
 
         // Pass 1: section overrides (in selection order, first-wins per slot).
         foreach ($selectedKeys as $key) {
+            if ($key === AGENTIC_CHAT_MEDIATOR_KEY) {
+                continue;
+            }
             $persona = $byKey[$key] ?? null;
             if (!$persona || empty($persona['enabled'])) {
                 continue;
@@ -222,13 +236,17 @@ class AgenticChatPersonaService
             }
         }
 
-        // Pass 2: fallback to first enabled global persona per slot type.
+        // Pass 2: fallback to first enabled global persona per slot type
+        // (skipping the reserved mediator key).
         foreach (AGENTIC_CHAT_PERSONA_SLOT_TYPES as $slotType) {
             if (isset($resolved[$slotType])) {
                 continue;
             }
             foreach ($personas as $persona) {
                 if (empty($persona['enabled'])) {
+                    continue;
+                }
+                if (($persona['key'] ?? null) === AGENTIC_CHAT_MEDIATOR_KEY) {
                     continue;
                 }
                 if (($persona['slot_type'] ?? null) === $slotType) {
