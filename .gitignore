@@ -3,3 +3,4 @@ node_modules
 .DS_Store
 gulp/node_modules
 react/node_modules
+cookies.txt
