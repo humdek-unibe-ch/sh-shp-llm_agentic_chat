@@ -2,13 +2,15 @@
  * MessageList — renders persisted messages + in-flight streaming bubbles
  * as a real chat transcript.
  *
- * Smoothness:
- *   - Auto-scroll runs in a `useLayoutEffect` (before the browser paints)
- *     so a long history loaded on refresh never flashes from the top and
- *     then jumps to the bottom.
- *   - A "stick to bottom" guard means we only auto-scroll when the user is
- *     already near the bottom, so scrolling up to re-read history is not
- *     yanked back down while new tokens stream in.
+ * Scrolling:
+ *   - There is NO inner scroll box. The conversation grows with its
+ *     content and the PAGE owns the scrollbar (no double scrollbar, no
+ *     sticky content). A zero-height sentinel at the end of the transcript
+ *     is the scroll target.
+ *   - We only auto-follow once a live run has happened this session (so a
+ *     plain reload never hijacks the page position) and only when the
+ *     reader is already near the bottom, so scrolling up to re-read
+ *     history is not yanked back down while new tokens stream in.
  *
  * Grouping:
  *   - Consecutive messages from the SAME speaker are visually grouped: the
@@ -21,7 +23,7 @@
  *     yet, three pulsing dots stand in for the upcoming bubble so the UI
  *     never looks frozen during the agent's "thinking" window.
  */
-import React, { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import type {
   AssistantSpeakerMetadata,
   ChatMessage,
@@ -77,9 +79,14 @@ export const MessageList: React.FC<MessageListProps> = ({
   autoStartToken,
   isStreaming = false,
 }) => {
-  const scrollerRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
+  const streamingSeenRef = useRef(false);
   const personasByKey = useMemo(() => indexPersonas(personas), [personas]);
+
+  // Remember once a live run has happened this session; only then do we
+  // auto-follow the page scroll, so a plain reload never hijacks the page.
+  if (isStreaming) streamingSeenRef.current = true;
 
   // Show the bottom typing indicator while the stream is open AND no
   // assistant buffer has started yet (so the user has nothing visible).
@@ -154,30 +161,38 @@ export const MessageList: React.FC<MessageListProps> = ({
 
   const inflightSignature = inFlight.map((m) => m.text).join('|');
 
-  const handleScroll = useCallback(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stickToBottomRef.current = distance < STICK_THRESHOLD_PX;
+  // Track whether the PAGE is scrolled near the bottom of the
+  // conversation. The chat has no inner scrollbar any more, so we measure
+  // the bottom sentinel against the viewport instead of an inner element.
+  useEffect(() => {
+    const onScroll = () => {
+      const el = bottomRef.current;
+      if (!el) return;
+      const distance = el.getBoundingClientRect().top - window.innerHeight;
+      stickToBottomRef.current = distance < STICK_THRESHOLD_PX;
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+    };
   }, []);
 
+  // Follow new content by nudging the PAGE (not an inner box) to the
+  // bottom sentinel — but only during/after a live run, and only when the
+  // reader is already near the bottom, so re-reading history is never
+  // yanked. Runs before paint to avoid a visible jump.
   useLayoutEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
+    if (!streamingSeenRef.current) return;
     if (stickToBottomRef.current) {
-      // Instant (no smooth behavior) + before paint = no visible jump.
-      el.scrollTop = el.scrollHeight;
+      bottomRef.current?.scrollIntoView({ block: 'end' });
     }
   }, [rows.length, inflightSignature, showTypingIndicator]);
 
   return (
-    <div
-      className="agentic-chat__scroller"
-      ref={scrollerRef}
-      onScroll={handleScroll}
-      role="log"
-      aria-live="polite"
-    >
+    <div className="agentic-chat__scroller" role="log" aria-live="polite">
       {rows.map((row, idx) => {
         const prev = rows[idx - 1];
         const isFirstOfGroup = !prev || prev.speakerId !== row.speakerId;
@@ -210,6 +225,8 @@ export const MessageList: React.FC<MessageListProps> = ({
           </div>
         </div>
       )}
+
+      <div ref={bottomRef} className="agentic-chat__bottom" aria-hidden="true" />
     </div>
   );
 };

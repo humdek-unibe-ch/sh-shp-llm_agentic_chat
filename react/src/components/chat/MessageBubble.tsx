@@ -67,12 +67,28 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   const avatarIsImage = isImageAvatar(persona?.avatar);
   const displayName = persona?.name || authorName || '';
 
-  // User bubbles never carry an avatar (right-aligned). Assistant bubbles
-  // show the avatar on the first bubble of a group and an invisible spacer
-  // afterwards so the whole run stays left-aligned to the same gutter.
-  let avatar: React.ReactNode = null;
-  if (!isUser) {
-    avatar = showAvatar ? (
+  // Both sides carry an avatar so the conversation reads symmetrically:
+  // the persona avatar on the left for assistants, a generic "you" icon on
+  // the right for the user. On grouped follow-up bubbles the avatar is
+  // replaced by an invisible spacer so the run stays aligned to the same
+  // gutter.
+  const spacer = (
+    <div className="agentic-msg__avatar agentic-msg__avatar--spacer" aria-hidden="true" />
+  );
+
+  let leftAvatar: React.ReactNode = null;
+  let rightAvatar: React.ReactNode = null;
+
+  if (isUser) {
+    rightAvatar = showAvatar ? (
+      <div className="agentic-msg__avatar agentic-msg__avatar--user" aria-hidden="true">
+        <i className="fas fa-user" />
+      </div>
+    ) : (
+      spacer
+    );
+  } else {
+    leftAvatar = showAvatar ? (
       <div
         className="agentic-msg__avatar"
         style={persona?.color ? { backgroundColor: persona.color } : undefined}
@@ -85,13 +101,13 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         )}
       </div>
     ) : (
-      <div className="agentic-msg__avatar agentic-msg__avatar--spacer" aria-hidden="true" />
+      spacer
     );
   }
 
   return (
     <div className={wrapperClass}>
-      {avatar}
+      {leftAvatar}
       <div className="agentic-msg__body">
         {!isUser && showName && displayName && (
           <div className="agentic-msg__author">{displayName}</div>
@@ -107,6 +123,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         </div>
         {timestamp && <div className="agentic-msg__timestamp">{timestamp}</div>}
       </div>
+      {rightAvatar}
     </div>
   );
 };

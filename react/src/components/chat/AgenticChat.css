@@ -2,9 +2,10 @@
  * Agentic Chat — frontend styles
  *
  * Goals
- *   - Read like a real chat app: a bounded conversation window with a
- *     participants bar, grouped speech bubbles, avatars, names and times,
- *     and an input pinned to the bottom.
+ *   - Read like a real chat app: a participants bar, grouped speech
+ *     bubbles, avatars, names and times. The conversation grows with its
+ *     content and the PAGE owns the scrollbar (no inner scroll box, so no
+ *     double scrollbar and nothing pinned/sticky).
  *   - Stay easy to re-theme: every colour / radius / size is a CSS custom
  *     property declared on `.agentic-chat`. Override these (e.g. from the
  *     section's `css` field or a site stylesheet) to restyle the chat
@@ -43,6 +44,7 @@
   --agentic-text: #1f2937;
   --agentic-muted: #6b7280;
   --agentic-avatar-bg: #94a3b8;
+  --agentic-user-avatar-bg: #475569;
 
   --agentic-radius-lg: 0.9rem;
   --agentic-radius-md: 0.85rem;
@@ -50,7 +52,6 @@
 
   --agentic-bubble-max: 78%;
   --agentic-window-min: 16rem;
-  --agentic-window-max: 60vh;
 
   display: flex;
   flex-direction: column;
@@ -285,30 +286,22 @@
 }
 
 /*
- * The conversation window is bounded: it grows with the content up to
- * `--agentic-window-max`, then scrolls internally. This gives the surface
- * a stable "chat window" feel and keeps the auto-scroll contained so a
- * refresh of a long history never yanks the whole page around.
+ * The conversation grows with its content — there is no inner scroll box.
+ * The page is the only scroller, which avoids the double-scrollbar problem
+ * and keeps long histories from being clipped. Auto-follow during a live
+ * run is handled in JS by nudging the page to the bottom sentinel.
  */
 .agentic-chat__scroller {
   display: flex;
   flex-direction: column;
   padding: 1rem;
-  overflow-y: auto;
-  overflow-x: hidden;
-  min-height: var(--agentic-window-min);
-  max-height: var(--agentic-window-max);
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
 }
 
-.agentic-chat__scroller::-webkit-scrollbar {
-  width: 7px;
-}
-
-.agentic-chat__scroller::-webkit-scrollbar-thumb {
-  background: #d1d5db;
-  border-radius: 999px;
+/* Zero-height marker at the end of the transcript; the scroll target used
+ * when following a live run. */
+.agentic-chat__bottom {
+  height: 0;
+  scroll-margin-bottom: 1rem;
 }
 
 /* Messages ---------------------------------------------------------------- */
@@ -354,6 +347,12 @@
 /* Keeps grouped follow-up bubbles aligned under the first one's bubble. */
 .agentic-msg__avatar--spacer {
   background: transparent;
+}
+
+/* Generic "you" avatar on the right of user bubbles, mirroring the
+ * persona avatars on the left. */
+.agentic-msg__avatar--user {
+  background: var(--agentic-user-avatar-bg);
 }
 
 .agentic-msg__body {
@@ -507,6 +506,16 @@
   padding: 0.75rem 1rem;
   background: var(--agentic-bg);
   border-top: 1px solid var(--agentic-border);
+}
+
+/* Live run-status line sitting directly above the input, so "X is
+ * typing…" / "Handing off to Y" is visible right where the user is
+ * looking instead of pinned to the header. */
+.agentic-chat__statusbar {
+  display: flex;
+  align-items: center;
+  min-height: 1.4rem;
+  margin-bottom: 0.5rem;
 }
 
 .agentic-input {
@@ -763,7 +772,6 @@
 @media (max-width: 576px) {
   .agentic-chat {
     --agentic-bubble-max: 88%;
-    --agentic-window-max: 70vh;
     border-radius: 0.6rem;
   }
 

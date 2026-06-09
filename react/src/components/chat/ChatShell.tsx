@@ -2,11 +2,12 @@
  * ChatShell
  * =========
  *
- * Presentational frame for the agentic chat. Mirrors the visual layout
- * of the base `sh-shp-llm` chat: a Bootstrap card with a sticky header
- * (title, status badge, primary actions), a scrolling body (persona
- * strip + message list), an optional completion banner, and a footer
- * containing the input bar (or a completion notice).
+ * Presentational frame for the agentic chat: a card with a header
+ * (brand + title + primary actions), a body (participant strip + message
+ * list) that grows with the conversation, and a footer holding the live
+ * run-status line and the input bar (or, once the case is complete, a
+ * read-only completion notice). Nothing is position-sticky — the page
+ * itself owns the scrollbar.
  *
  * The shell is purely visual; data, hooks and side-effects live in
  * `AgenticChatApp`.
@@ -171,6 +172,14 @@ export const ChatShell: React.FC<ChatShellProps> = ({
   const inputDisabled = isStreaming || caseClosed || status === 'starting';
   const personasByKey = useMemo(() => indexPersonas(personas), [personas]);
 
+  // The live run status ("Anja is typing…", "Configuring…", "Handing off
+  // to X") now sits just above the input — close to where the user is
+  // looking — instead of pinned to the header. Terminal/parked states are
+  // already conveyed elsewhere (completion notice, interrupt card, error
+  // banner), so the bottom status only surfaces the in-progress states.
+  const showLiveStatus =
+    showRunStatus && !caseClosed && (status === 'starting' || status === 'running' || isStreaming);
+
   // Resolve the persona currently streaming and the (optional) pending
   // handoff target so the status badge + persona strip can show
   // "X is typing…" vs "Handing off to Y" distinctly.
@@ -205,21 +214,6 @@ export const ChatShell: React.FC<ChatShellProps> = ({
               <h5 className="agentic-chat__title text-truncate">{labels.title}</h5>
             )}
           </div>
-          {showRunStatus && (
-            <RunStatusBadge
-              status={status}
-              isStreaming={isStreaming}
-              caseClosed={caseClosed}
-              activeSpeakerName={activeSpeaker?.name ?? null}
-              handoffTargetName={handoffTargetName}
-              labels={{
-                idle: labels.statusIdle,
-                running: labels.statusRunning,
-                complete: labels.statusComplete,
-                error: labels.statusError,
-              }}
-            />
-          )}
         </div>
         {labels.description && (
           <div className="agentic-chat__description">
@@ -309,16 +303,35 @@ export const ChatShell: React.FC<ChatShellProps> = ({
             )}
           </div>
         ) : (
-          <MessageInput
-            placeholder={labels.placeholder}
-            sendLabel={labels.sendLabel}
-            disabled={inputDisabled}
-            onSend={onSend}
-            enableSpeechToText={enableSpeechToText}
-            speechToTextModel={speechToTextModel}
-            sectionId={sectionId}
-            controllerUrl={controllerUrl}
-          />
+          <>
+            {showLiveStatus && (
+              <div className="agentic-chat__statusbar">
+                <RunStatusBadge
+                  status={status}
+                  isStreaming={isStreaming}
+                  caseClosed={caseClosed}
+                  activeSpeakerName={activeSpeaker?.name ?? null}
+                  handoffTargetName={handoffTargetName}
+                  labels={{
+                    idle: labels.statusIdle,
+                    running: labels.statusRunning,
+                    complete: labels.statusComplete,
+                    error: labels.statusError,
+                  }}
+                />
+              </div>
+            )}
+            <MessageInput
+              placeholder={labels.placeholder}
+              sendLabel={labels.sendLabel}
+              disabled={inputDisabled}
+              onSend={onSend}
+              enableSpeechToText={enableSpeechToText}
+              speechToTextModel={speechToTextModel}
+              sectionId={sectionId}
+              controllerUrl={controllerUrl}
+            />
+          </>
         )}
       </div>
 
