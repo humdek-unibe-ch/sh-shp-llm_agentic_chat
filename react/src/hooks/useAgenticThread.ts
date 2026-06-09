@@ -6,12 +6,23 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ChatApi } from '../utils/api';
 import type { ThreadView } from '../types';
 
+export interface RefreshOptions {
+  /**
+   * Sync silently in the background: do NOT flip the full-screen
+   * `loading` flag. Used for the post-stream reconcile so the chat
+   * never flashes the loading spinner mid-conversation (which the user
+   * perceives as a big "jump"). The initial mount load is non-silent so
+   * the spinner is shown exactly once.
+   */
+  silent?: boolean;
+}
+
 export interface UseAgenticThreadResult {
   thread: ThreadView['thread'];
   messages: ThreadView['messages'];
   loading: boolean;
   error: string | null;
-  refresh: () => Promise<void>;
+  refresh: (opts?: RefreshOptions) => Promise<void>;
   setThread: (next: ThreadView) => void;
 }
 
@@ -22,11 +33,12 @@ export function useAgenticThread(api: ChatApi): UseAgenticThreadResult {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const refresh = useCallback(async (opts?: RefreshOptions) => {
+    const silent = opts?.silent === true;
+    if (!silent) setLoading(true);
     setError(null);
     const result = await api.getThread();
-    setLoading(false);
+    if (!silent) setLoading(false);
     if (!result.ok) {
       setError(result.error);
       return;

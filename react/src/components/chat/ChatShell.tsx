@@ -194,19 +194,15 @@ export const ChatShell: React.FC<ChatShellProps> = ({
   }, [messages]);
 
   return (
-    <section className="agentic-chat card border-0 shadow-sm">
-      <header className="agentic-chat__header card-header bg-white border-bottom">
+    <section className="agentic-chat">
+      <header className="agentic-chat__header">
         <div className="agentic-chat__title-row">
-          <div className="d-flex align-items-center" style={{ minWidth: 0, flex: 1 }}>
-            <div
-              className="bg-primary rounded-circle d-flex align-items-center justify-content-center mr-3 flex-shrink-0"
-              style={{ width: '40px', height: '40px' }}
-              aria-hidden="true"
-            >
-              <i className="fas fa-robot text-white" />
+          <div className="agentic-chat__brand">
+            <div className="agentic-chat__brand-icon" aria-hidden="true">
+              <i className="fas fa-robot" />
             </div>
             {labels.title && (
-              <h5 className="agentic-chat__title mb-0 text-truncate">{labels.title}</h5>
+              <h5 className="agentic-chat__title text-truncate">{labels.title}</h5>
             )}
           </div>
           {showRunStatus && (
@@ -232,12 +228,12 @@ export const ChatShell: React.FC<ChatShellProps> = ({
             </ReactMarkdown>
           </div>
         )}
-        {(showStart || showReset) && (
+        {(showStart || (showReset && !caseClosed)) && (
           <ThreadActions
             startLabel={labels.startLabel}
             resetLabel={labels.resetLabel}
             showStart={showStart}
-            showReset={showReset}
+            showReset={showReset && !caseClosed}
             disabled={isStreaming}
             onStart={onStart}
             onReset={onReset}
@@ -254,7 +250,7 @@ export const ChatShell: React.FC<ChatShellProps> = ({
         />
       )}
 
-      <div className="agentic-chat__body card-body p-0 d-flex flex-column">
+      <div className="agentic-chat__body">
         <MessageList
           messages={messages}
           inFlight={inFlight}
@@ -293,16 +289,19 @@ export const ChatShell: React.FC<ChatShellProps> = ({
         />
       )}
 
-      <div className="agentic-chat__footer card-footer bg-white border-top">
+      <div className="agentic-chat__footer">
         {caseClosed ? (
-          <div className="agentic-chat__completion alert alert-success mb-0">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-              {labels.completionMessage || 'This thread is complete.'}
-            </ReactMarkdown>
+          <div className="agentic-chat__completion" role="status">
+            <div className="agentic-chat__completion-text">
+              <i className="fas fa-check-circle agentic-chat__completion-icon" aria-hidden="true" />
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                {labels.completionMessage || 'This thread is complete.'}
+              </ReactMarkdown>
+            </div>
             {showReset && (
               <button
                 type="button"
-                className="btn btn-primary btn-sm mt-2"
+                className="btn btn-primary btn-sm agentic-chat__new-thread"
                 onClick={onReset}
               >
                 <i className="fas fa-redo mr-1" aria-hidden="true" /> {labels.resetLabel}

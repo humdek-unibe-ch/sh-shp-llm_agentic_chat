@@ -1,5 +1,5 @@
 /**
- * MessageBubble - single message row.
+ * MessageBubble — single message row.
  *
  * Renders assistant text as Markdown (no raw HTML), and user / system
  * messages as plain text. The conscious omission of `rehype-raw` here
@@ -14,6 +14,12 @@
  * derived from the message's normalised speaker metadata
  * (`context.authorPersonaKey`) — see `MessageList` for the lookup
  * logic.
+ *
+ * Grouping: when several consecutive messages come from the same
+ * speaker, `MessageList` passes `showAvatar={false}` / `showName={false}`
+ * / `grouped` for every bubble after the first so the run reads as one
+ * block (avatar shown once, tighter vertical rhythm). An invisible
+ * avatar spacer keeps the bubbles aligned with the first one.
  */
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -29,6 +35,12 @@ export interface MessageBubbleProps {
   authorName?: string;
   isStreaming?: boolean;
   timestamp?: string;
+  /** Show the speaker avatar (false for grouped follow-up bubbles). */
+  showAvatar?: boolean;
+  /** Show the speaker name line (false for grouped follow-up bubbles). */
+  showName?: boolean;
+  /** Tighten the top spacing because this bubble continues a group. */
+  grouped?: boolean;
 }
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({
@@ -38,31 +50,50 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   authorName,
   isStreaming,
   timestamp,
+  showAvatar = true,
+  showName = true,
+  grouped = false,
 }) => {
   const isUser = role === 'user';
-  const wrapperClass = `agentic-msg agentic-msg--${role}${isStreaming ? ' agentic-msg--streaming' : ''}`;
+  const wrapperClass = [
+    'agentic-msg',
+    `agentic-msg--${role}`,
+    isStreaming ? 'agentic-msg--streaming' : '',
+    grouped ? 'agentic-msg--grouped' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   const avatarIsImage = isImageAvatar(persona?.avatar);
   const displayName = persona?.name || authorName || '';
 
-  const avatar = isUser ? null : (
-    <div
-      className="agentic-msg__avatar"
-      style={persona?.color ? { backgroundColor: persona.color } : undefined}
-      aria-hidden="true"
-    >
-      {avatarIsImage ? (
-        <img src={resolveAvatarUrl(persona?.avatar)} alt="" />
-      ) : (
-        persona?.avatar || (displayName ? displayName.charAt(0).toUpperCase() : 'A')
-      )}
-    </div>
-  );
+  // User bubbles never carry an avatar (right-aligned). Assistant bubbles
+  // show the avatar on the first bubble of a group and an invisible spacer
+  // afterwards so the whole run stays left-aligned to the same gutter.
+  let avatar: React.ReactNode = null;
+  if (!isUser) {
+    avatar = showAvatar ? (
+      <div
+        className="agentic-msg__avatar"
+        style={persona?.color ? { backgroundColor: persona.color } : undefined}
+        aria-hidden="true"
+      >
+        {avatarIsImage ? (
+          <img src={resolveAvatarUrl(persona?.avatar)} alt="" />
+        ) : (
+          persona?.avatar || (displayName ? displayName.charAt(0).toUpperCase() : 'A')
+        )}
+      </div>
+    ) : (
+      <div className="agentic-msg__avatar agentic-msg__avatar--spacer" aria-hidden="true" />
+    );
+  }
 
   return (
     <div className={wrapperClass}>
       {avatar}
       <div className="agentic-msg__body">
-        {!isUser && displayName && (
+        {!isUser && showName && displayName && (
           <div className="agentic-msg__author">{displayName}</div>
         )}
         <div className="agentic-msg__content">

@@ -1,16 +1,27 @@
 /**
- * MessageList - renders persisted messages + in-flight streaming bubbles.
- * Auto-scrolls to bottom when new content arrives.
+ * MessageList — renders persisted messages + in-flight streaming bubbles
+ * as a real chat transcript.
  *
- * When `isStreaming` is true and there is no in-flight assistant text yet
- * (the upstream agent is still "thinking" before emitting the first
- * TEXT_MESSAGE_CONTENT delta), we render a typing indicator so the user
- * gets immediate feedback that the request is being processed. Some
- * agent_framework configurations buffer the entire response server-side
- * and emit the text in a single delta after a noticeable delay; the
- * typing dots prevent the UI from looking frozen during that window.
+ * Smoothness:
+ *   - Auto-scroll runs in a `useLayoutEffect` (before the browser paints)
+ *     so a long history loaded on refresh never flashes from the top and
+ *     then jumps to the bottom.
+ *   - A "stick to bottom" guard means we only auto-scroll when the user is
+ *     already near the bottom, so scrolling up to re-read history is not
+ *     yanked back down while new tokens stream in.
+ *
+ * Grouping:
+ *   - Consecutive messages from the SAME speaker are visually grouped: the
+ *     avatar + name are shown only on the first bubble of the run and the
+ *     following bubbles are tucked in underneath. This mirrors how modern
+ *     chat apps render a burst of messages from one participant.
+ *
+ * Typing indicator:
+ *   - When the SSE connection is open but no assistant text has streamed
+ *     yet, three pulsing dots stand in for the upcoming bubble so the UI
+ *     never looks frozen during the agent's "thinking" window.
  */
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import type {
   AssistantSpeakerMetadata,
   ChatMessage,
@@ -31,6 +42,33 @@ export interface MessageListProps {
   isStreaming?: boolean;
 }
 
+/** Distance (px) from the bottom within which we keep auto-scrolling. */
+const STICK_THRESHOLD_PX = 120;
+
+interface RenderRow {
+  key: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  persona: Persona | null;
+  authorName?: string;
+  timestamp?: string;
+  isStreaming?: boolean;
+  /** Identity of the speaker, used to group consecutive bubbles. */
+  speakerId: string;
+}
+
+/** Stable identity for a message's speaker (drives bubble grouping). */
+function speakerIdOf(
+  role: string,
+  persona: Persona | null,
+  authorName?: string | null,
+  sourceExecutorId?: string | null
+): string {
+  if (role === 'user') return 'user';
+  if (role === 'system') return 'system';
+  return `assistant:${persona?.key || authorName || sourceExecutorId || 'assistant'}`;
+}
+
 export const MessageList: React.FC<MessageListProps> = ({
   messages,
   inFlight,
@@ -40,94 +78,121 @@ export const MessageList: React.FC<MessageListProps> = ({
   isStreaming = false,
 }) => {
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
   const personasByKey = useMemo(() => indexPersonas(personas), [personas]);
 
-  // Whether to show the bottom typing indicator: stream is open AND no
+  // Show the bottom typing indicator while the stream is open AND no
   // assistant buffer has started yet (so the user has nothing visible).
   const hasInFlightAssistant = inFlight.some((b) => b.role === 'assistant');
   const showTypingIndicator = isStreaming && !hasInFlightAssistant;
 
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages.length, inFlight.map((m) => m.text).join('|'), showTypingIndicator]);
-
-  const visibleMessages = useMemo(
-    () =>
-      messages.filter((m) => {
-        if (m.role === 'user' && m.content.trim() === autoStartToken) return false;
-        return m.content.trim().length > 0;
-      }),
-    [messages, autoStartToken]
+  const resolveAssistantPersona = useCallback(
+    (
+      authorPersonaKey?: string | null,
+      authorName?: string | null,
+      sourceExecutorId?: string | null
+    ): Persona | null => {
+      let persona: Persona | null = null;
+      if (authorPersonaKey) persona = personasByKey[authorPersonaKey] || null;
+      if (!persona && (authorName || sourceExecutorId)) {
+        persona = findPersonaByAuthor(personas, slotMap, authorName || sourceExecutorId || null);
+      }
+      return persona;
+    },
+    [personas, personasByKey, slotMap]
   );
 
-  return (
-    <div className="agentic-chat__scroller" ref={scrollerRef} role="log" aria-live="polite">
-      {visibleMessages.map((msg) => {
-        const ctx = msg.context as (AssistantSpeakerMetadata & Record<string, unknown>) | null;
-        // Resolve the speaker for an assistant message in this order:
-        //   1. Persisted `authorPersonaKey` from the message itself.
-        //   2. Persisted `authorName` / `sourceExecutorId` looked up
-        //      through the section's slot map.
-        //   3. (last-resort) name-based scan of the persona library.
-        // This ensures the avatar/name survive a page refresh — the
-        // transient `currentPersonaKey` handoff state from useMessages
-        // is no longer needed for correctness.
-        let persona: Persona | null = null;
-        if (msg.role === 'assistant' && ctx) {
-          if (ctx.authorPersonaKey) {
-            persona = personasByKey[ctx.authorPersonaKey] || null;
-          }
-          if (!persona && (ctx.authorName || ctx.sourceExecutorId)) {
-            persona = findPersonaByAuthor(personas, slotMap, ctx.authorName || ctx.sourceExecutorId || null);
-          }
-        }
-        // Use the AG-UI `messageId` as the React key whenever we have
-        // one so the streaming bubble (rendered from `inFlight`) and
-        // the persisted bubble (rendered from `messages` after
-        // TEXT_MESSAGE_END) reconcile to the SAME DOM node. Without
-        // this the React diff treats them as different elements,
-        // unmounts the streaming bubble and remounts a fresh one,
-        // which the user perceives as a "reload" flicker between the
-        // last delta and the final message.
-        const stableKey = typeof ctx?.messageId === 'string' && ctx.messageId
-          ? `msg-${ctx.messageId}`
-          : `id-${msg.id}`;
-        return (
-          <MessageBubble
-            key={stableKey}
-            role={msg.role}
-            content={msg.content}
-            persona={persona}
-            authorName={ctx?.authorName}
-            timestamp={formatTimestamp(msg.created_at)}
-          />
-        );
-      })}
+  // Build a single ordered list of renderable rows (persisted + in-flight)
+  // so speaker grouping spans the boundary between committed history and
+  // the bubble currently streaming.
+  const rows = useMemo<RenderRow[]>(() => {
+    const out: RenderRow[] = [];
 
-      {inFlight.map((buf) => {
-        let persona: Persona | null = null;
-        if (buf.authorPersonaKey) {
-          persona = personasByKey[buf.authorPersonaKey] || null;
-        }
-        if (!persona && (buf.authorName || buf.sourceExecutorId)) {
-          persona = findPersonaByAuthor(personas, slotMap, buf.authorName || buf.sourceExecutorId || null);
-        }
-        // Same `msg-<messageId>` key the persisted bubble will use
-        // when TEXT_MESSAGE_END fires; that way React keeps the same
-        // DOM node and updates content/timestamp in place instead of
-        // tearing down the streaming bubble and rebuilding from
-        // scratch.
-        const stableKey = buf.messageId ? `msg-${buf.messageId}` : `buf-${buf.id}`;
+    for (const msg of messages) {
+      if (msg.role === 'user' && msg.content.trim() === autoStartToken) continue;
+      if (msg.content.trim().length === 0) continue;
+      const ctx = msg.context as (AssistantSpeakerMetadata & Record<string, unknown>) | null;
+      let persona: Persona | null = null;
+      if (msg.role === 'assistant' && ctx) {
+        persona = resolveAssistantPersona(ctx.authorPersonaKey, ctx.authorName, ctx.sourceExecutorId);
+      }
+      // Reconcile streaming → persisted bubbles to the SAME DOM node by
+      // keying on the AG-UI messageId whenever present.
+      const key = typeof ctx?.messageId === 'string' && ctx.messageId
+        ? `msg-${ctx.messageId}`
+        : `id-${msg.id}`;
+      out.push({
+        key,
+        role: msg.role,
+        content: msg.content,
+        persona,
+        authorName: ctx?.authorName,
+        timestamp: formatTimestamp(msg.created_at),
+        speakerId: speakerIdOf(msg.role, persona, ctx?.authorName, ctx?.sourceExecutorId),
+      });
+    }
+
+    for (const buf of inFlight) {
+      let persona: Persona | null = null;
+      if (buf.role !== 'user') {
+        persona = resolveAssistantPersona(buf.authorPersonaKey, buf.authorName, buf.sourceExecutorId);
+      }
+      const key = buf.messageId ? `msg-${buf.messageId}` : `buf-${buf.id}`;
+      out.push({
+        key,
+        role: buf.role,
+        content: buf.text,
+        persona,
+        authorName: buf.authorName,
+        isStreaming: true,
+        speakerId: speakerIdOf(buf.role, persona, buf.authorName, buf.sourceExecutorId),
+      });
+    }
+
+    return out;
+  }, [messages, inFlight, autoStartToken, resolveAssistantPersona]);
+
+  const inflightSignature = inFlight.map((m) => m.text).join('|');
+
+  const handleScroll = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distance < STICK_THRESHOLD_PX;
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    if (stickToBottomRef.current) {
+      // Instant (no smooth behavior) + before paint = no visible jump.
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [rows.length, inflightSignature, showTypingIndicator]);
+
+  return (
+    <div
+      className="agentic-chat__scroller"
+      ref={scrollerRef}
+      onScroll={handleScroll}
+      role="log"
+      aria-live="polite"
+    >
+      {rows.map((row, idx) => {
+        const prev = rows[idx - 1];
+        const isFirstOfGroup = !prev || prev.speakerId !== row.speakerId;
         return (
           <MessageBubble
-            key={stableKey}
-            role={buf.role}
-            content={buf.text}
-            persona={persona}
-            authorName={buf.authorName}
-            isStreaming
+            key={row.key}
+            role={row.role}
+            content={row.content}
+            persona={row.persona}
+            authorName={row.authorName}
+            timestamp={row.timestamp}
+            isStreaming={row.isStreaming}
+            showAvatar={isFirstOfGroup}
+            showName={isFirstOfGroup}
+            grouped={!isFirstOfGroup}
           />
         );
       })}

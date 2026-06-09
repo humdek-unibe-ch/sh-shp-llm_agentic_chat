@@ -1,39 +1,80 @@
 /* ============================================================================
  * Agentic Chat — frontend styles
  *
- * The styles deliberately mirror the visual language of `sh-shp-llm`'s
- * `LlmChat.css`: Bootstrap card surface, soft shadow, blue avatar bubble,
- * rounded message bubbles with subtle borders. Class names are scoped
- * with the `agentic-` prefix so the agentic chat can coexist with the
- * standard LLM chat on the same page.
+ * Goals
+ *   - Read like a real chat app: a bounded conversation window with a
+ *     participants bar, grouped speech bubbles, avatars, names and times,
+ *     and an input pinned to the bottom.
+ *   - Stay easy to re-theme: every colour / radius / size is a CSS custom
+ *     property declared on `.agentic-chat`. Override these (e.g. from the
+ *     section's `css` field or a site stylesheet) to restyle the chat
+ *     without touching the markup.
+ *   - Lean on a small, semantic class set (BEM-ish `agentic-*`) instead of
+ *     heavy bespoke CSS, so the structure is obvious and overridable.
+ *   - Scale cleanly on mobile.
+ *
+ * Class names are scoped with the `agentic-` prefix so the agentic chat can
+ * coexist with the standard `sh-shp-llm` chat on the same page.
  * ========================================================================== */
 
 .agentic-chat-root {
   width: 100%;
 }
 
-/* Card container ---------------------------------------------------------- */
+/* Theme tokens ------------------------------------------------------------ */
 /*
- * Layout choice: the chat card grows naturally with the document instead
- * of being forced to a fixed min-height. This avoids the classic "double
- * scroller" problem where both the card body and the page have their own
- * scrollbars: instead, the page itself is the only scroller.
+ * These custom properties are the public theming surface. Re-declare any of
+ * them on `.agentic-chat` (or a parent) to restyle the whole chat.
  */
 .agentic-chat {
+  --agentic-accent: #2563eb;
+  --agentic-accent-contrast: #ffffff;
+
+  --agentic-bg: #ffffff;            /* card / header / footer background      */
+  --agentic-surface: #f8fafc;       /* subtle surfaces (strip, toolbar)       */
+  --agentic-scroller-bg: #f9fafb;   /* message area background                */
+
+  --agentic-bubble-assistant-bg: #ffffff;
+  --agentic-bubble-assistant-text: #1f2937;
+  --agentic-bubble-user-bg: var(--agentic-accent);
+  --agentic-bubble-user-text: var(--agentic-accent-contrast);
+
+  --agentic-border: #e5e7eb;
+  --agentic-text: #1f2937;
+  --agentic-muted: #6b7280;
+  --agentic-avatar-bg: #94a3b8;
+
+  --agentic-radius-lg: 0.9rem;
+  --agentic-radius-md: 0.85rem;
+  --agentic-radius-sm: 0.4rem;
+
+  --agentic-bubble-max: 78%;
+  --agentic-window-min: 16rem;
+  --agentic-window-max: 60vh;
+
   display: flex;
   flex-direction: column;
-  background: #ffffff;
-  border: 1px solid #e3e6ea;
-  border-radius: 0.5rem;
-  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.04);
-  overflow: visible;
+  background: var(--agentic-bg);
+  border: 1px solid var(--agentic-border);
+  border-radius: var(--agentic-radius-lg);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  overflow: hidden;
   font-family: inherit;
+  color: var(--agentic-text);
 }
 
+/*
+ * Reserve roughly the conversation window height while the first
+ * `get_thread` resolves so the card doesn't visibly grow when the chat
+ * swaps in — keeps the initial load from "jumping".
+ */
 .agentic-chat--loading {
-  padding: 1rem;
+  padding: 1.25rem;
   text-align: center;
-  color: #6c757d;
+  color: var(--agentic-muted);
+  min-height: var(--agentic-window-min);
+  align-items: center;
+  justify-content: center;
 }
 
 .agentic-chat__loading {
@@ -44,6 +85,8 @@
 
 .agentic-chat__header {
   padding: 0.75rem 1rem;
+  background: var(--agentic-bg);
+  border-bottom: 1px solid var(--agentic-border);
 }
 
 .agentic-chat__title-row {
@@ -53,16 +96,36 @@
   gap: 0.75rem;
 }
 
+.agentic-chat__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.agentic-chat__brand-icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  background: var(--agentic-accent);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
 .agentic-chat__title {
   margin: 0;
   font-size: 1.05rem;
   font-weight: 600;
-  color: #2c3e50;
+  color: var(--agentic-text);
 }
 
 .agentic-chat__description {
   font-size: 0.875rem;
-  color: #4a5568;
+  color: var(--agentic-muted);
   margin-top: 0.5rem;
 }
 
@@ -72,8 +135,9 @@
 
 .agentic-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
-  margin-top: 0.5rem;
+  margin-top: 0.6rem;
 }
 
 /* Status badge ------------------------------------------------------------ */
@@ -81,88 +145,99 @@
 .agentic-status {
   display: inline-flex;
   align-items: center;
+  gap: 0.35rem;
   padding: 0.15rem 0.6rem;
   font-size: 0.75rem;
+  font-weight: 500;
   border-radius: 999px;
-  background: #e9ecef;
+  background: #eef0f3;
   color: #495057;
   white-space: nowrap;
 }
 
 .agentic-status--running {
-  background: #cfe2ff;
-  color: #084298;
+  background: #dbe7ff;
+  color: #1d4ed8;
 }
 
-/* While POST /reflect/configure (and the initial run) is in flight. */
 .agentic-status--configuring {
-  background: #e2d9f3;
-  color: #432874;
+  background: #e9e2f8;
+  color: #5b21b6;
 }
 
-/* While a `handoff_to_<x>` tool call is in flight but the target has not
- * started speaking yet. */
 .agentic-status--handoff {
-  background: #cff4fc;
-  color: #055160;
+  background: #d6f3fb;
+  color: #0e7490;
 }
 
 .agentic-status--awaiting {
-  background: #fff3cd;
-  color: #664d03;
+  background: #fef3c7;
+  color: #92400e;
 }
 
 .agentic-status--complete {
-  background: #d1e7dd;
-  color: #0f5132;
+  background: #dcfce7;
+  color: #166534;
 }
 
 .agentic-status--error {
-  background: #f8d7da;
-  color: #842029;
+  background: #fee2e2;
+  color: #991b1b;
 }
 
-/* Persona strip ----------------------------------------------------------- */
+/* Participants strip ------------------------------------------------------ */
 
 .agentic-personas {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  border-bottom: 1px solid #f1f3f5;
-  background: #fafbfc;
+  flex-wrap: nowrap;
+  gap: 0.4rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--agentic-border);
+  background: var(--agentic-surface);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.agentic-personas::-webkit-scrollbar {
+  height: 5px;
+}
+
+.agentic-personas::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 999px;
 }
 
 .agentic-personas__item {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.2rem 0.55rem;
-  background: #fff;
-  border: 1px solid #dee2e6;
+  padding: 0.2rem 0.6rem 0.2rem 0.25rem;
+  background: var(--agentic-bg);
+  border: 1px solid var(--agentic-border);
   border-radius: 999px;
   font-size: 0.8125rem;
-  transition: border-color 0.15s ease, transform 0.15s ease;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
 .agentic-personas__item.is-active {
-  border-color: #0d6efd;
-  transform: translateY(-1px);
-  box-shadow: 0 1px 2px rgba(13, 110, 253, 0.1);
+  border-color: var(--agentic-accent);
+  box-shadow: 0 0 0 1px var(--agentic-accent) inset;
 }
 
-/* Pending handoff target: a dashed ring + arrow that hints the next
+/* Pending handoff target: dashed ring + nudging arrow hints the next
  * speaker without claiming they are already active. */
 .agentic-personas__item.is-handoff-target {
   border-style: dashed;
-  border-color: #0dcaf0;
-  background: #f2fcff;
+  border-color: #06b6d4;
+  background: #f0fdff;
 }
 
 .agentic-personas__handoff {
   display: inline-flex;
   align-items: center;
-  color: #0a97b0;
+  color: #0e7490;
   font-size: 0.7rem;
   animation: agentic-handoff-nudge 1s ease-in-out infinite;
 }
@@ -176,15 +251,16 @@
   width: 1.5rem;
   height: 1.5rem;
   border-radius: 50%;
-  background: #6c757d;
+  background: var(--agentic-avatar-bg);
   color: #fff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   overflow: hidden;
+  flex: 0 0 auto;
 }
 
 .agentic-personas__avatar img {
@@ -195,7 +271,7 @@
 
 .agentic-personas__name {
   font-weight: 500;
-  color: #2c3e50;
+  color: var(--agentic-text);
 }
 
 /* Body / scroller --------------------------------------------------------- */
@@ -203,39 +279,54 @@
 .agentic-chat__body {
   flex: 1 1 auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--agentic-scroller-bg);
 }
 
 /*
- * The scroller no longer caps its own height. The chat card flows with
- * the page; the page itself is the only scroller. This matches the
- * baseline LLM chat (sh-shp-llm) layout and removes the "two scrollbars"
- * bug visible when max-height was set to 60vh.
+ * The conversation window is bounded: it grows with the content up to
+ * `--agentic-window-max`, then scrolls internally. This gives the surface
+ * a stable "chat window" feel and keeps the auto-scroll contained so a
+ * refresh of a long history never yanks the whole page around.
  */
 .agentic-chat__scroller {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
   padding: 1rem;
-  flex: 1 1 auto;
-  background: #ffffff;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: var(--agentic-window-min);
+  max-height: var(--agentic-window-max);
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.agentic-chat__scroller::-webkit-scrollbar {
+  width: 7px;
+}
+
+.agentic-chat__scroller::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 999px;
 }
 
 /* Messages ---------------------------------------------------------------- */
 
 .agentic-msg {
   display: flex;
-  gap: 0.6rem;
+  gap: 0.55rem;
   align-items: flex-start;
+  margin-top: 0.85rem;
+}
+
+/* Tight spacing for follow-up bubbles from the same speaker. */
+.agentic-msg--grouped {
+  margin-top: 0.18rem;
 }
 
 .agentic-msg--user {
   justify-content: flex-end;
-}
-
-.agentic-msg--user .agentic-msg__body {
-  background: linear-gradient(135deg, #0d6efd 0%, #0b5ed7 100%);
-  color: #fff;
-  border-color: transparent;
 }
 
 .agentic-msg__avatar {
@@ -243,12 +334,12 @@
   width: 2rem;
   height: 2rem;
   border-radius: 50%;
-  background: #6c757d;
+  background: var(--agentic-avatar-bg);
   color: #fff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 600;
   text-transform: uppercase;
   overflow: hidden;
@@ -260,20 +351,41 @@
   object-fit: cover;
 }
 
+/* Keeps grouped follow-up bubbles aligned under the first one's bubble. */
+.agentic-msg__avatar--spacer {
+  background: transparent;
+}
+
 .agentic-msg__body {
-  max-width: 85%;
-  background: #f1f3f5;
-  border: 1px solid #e9ecef;
-  border-radius: 0.6rem;
-  padding: 0.55rem 0.85rem;
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.02);
+  max-width: var(--agentic-bubble-max);
+  background: var(--agentic-bubble-assistant-bg);
+  color: var(--agentic-bubble-assistant-text);
+  border: 1px solid var(--agentic-border);
+  border-radius: var(--agentic-radius-md);
+  padding: 0.5rem 0.8rem;
+  box-shadow: 0 1px 1px rgba(16, 24, 40, 0.03);
+}
+
+/* Speech-bubble tail only on the first bubble of each speaker run. */
+.agentic-msg--assistant:not(.agentic-msg--grouped) .agentic-msg__body {
+  border-top-left-radius: var(--agentic-radius-sm);
+}
+
+.agentic-msg--user .agentic-msg__body {
+  background: var(--agentic-bubble-user-bg);
+  color: var(--agentic-bubble-user-text);
+  border-color: transparent;
+}
+
+.agentic-msg--user:not(.agentic-msg--grouped) .agentic-msg__body {
+  border-top-right-radius: var(--agentic-radius-sm);
 }
 
 .agentic-msg__author {
   font-size: 0.75rem;
   font-weight: 600;
-  color: #495057;
-  margin-bottom: 0.25rem;
+  color: var(--agentic-muted);
+  margin-bottom: 0.2rem;
 }
 
 .agentic-msg__content {
@@ -281,6 +393,7 @@
   line-height: 1.45;
   white-space: pre-wrap;
   word-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 .agentic-msg__content > *:first-child { margin-top: 0; }
@@ -294,8 +407,8 @@
 }
 
 .agentic-msg__content pre {
-  background: #f8f9fa;
-  border: 1px solid #e9ecef;
+  background: #f3f4f6;
+  border: 1px solid var(--agentic-border);
   border-radius: 0.375rem;
   padding: 0.5rem;
   font-size: 0.85rem;
@@ -313,12 +426,13 @@
 
 .agentic-msg__timestamp {
   font-size: 0.7rem;
-  color: #adb5bd;
-  margin-top: 0.25rem;
+  color: var(--agentic-muted);
+  margin-top: 0.2rem;
+  text-align: right;
 }
 
 .agentic-msg--user .agentic-msg__timestamp {
-  color: rgba(255, 255, 255, 0.75);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .agentic-msg--streaming .agentic-msg__body::after {
@@ -337,37 +451,31 @@
 }
 
 /* Typing indicator -------------------------------------------------------- */
-/*
- * Shown while we know the upstream agent is processing (SSE connection
- * is open) but no TEXT_MESSAGE_CONTENT delta has arrived yet. Three
- * pulsing dots inside an assistant-style bubble; no flicker, no layout
- * shift when the real bubble eventually replaces it.
- */
+
 .agentic-typing {
   display: flex;
   align-items: flex-end;
-  gap: 0.5rem;
-  margin: 0.25rem 0 0.5rem;
-  padding: 0 1rem;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
 }
 
 .agentic-typing__avatar {
-  width: 32px;
-  height: 32px;
+  width: 2rem;
+  height: 2rem;
   border-radius: 50%;
-  background: #6c757d;
+  background: var(--agentic-avatar-bg);
   color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   flex-shrink: 0;
 }
 
 .agentic-typing__bubble {
-  background: #f1f3f5;
-  border: 1px solid #e3e6ea;
-  border-radius: 0.75rem;
+  background: var(--agentic-bubble-assistant-bg);
+  border: 1px solid var(--agentic-border);
+  border-radius: var(--agentic-radius-md);
   padding: 0.5rem 0.85rem;
   display: inline-flex;
   align-items: center;
@@ -379,35 +487,26 @@
   width: 0.4rem;
   height: 0.4rem;
   border-radius: 50%;
-  background: #6c757d;
+  background: var(--agentic-muted);
   display: inline-block;
   opacity: 0.4;
   animation: agentic-typing-bounce 1.2s ease-in-out infinite;
 }
 
-.agentic-typing__dot:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.agentic-typing__dot:nth-child(3) {
-  animation-delay: 0.4s;
-}
+.agentic-typing__dot:nth-child(2) { animation-delay: 0.2s; }
+.agentic-typing__dot:nth-child(3) { animation-delay: 0.4s; }
 
 @keyframes agentic-typing-bounce {
-  0%, 60%, 100% {
-    transform: translateY(0);
-    opacity: 0.4;
-  }
-  30% {
-    transform: translateY(-0.25rem);
-    opacity: 1;
-  }
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-0.25rem); opacity: 1; }
 }
 
 /* Footer / input bar ------------------------------------------------------ */
 
 .agentic-chat__footer {
   padding: 0.75rem 1rem;
+  background: var(--agentic-bg);
+  border-top: 1px solid var(--agentic-border);
 }
 
 .agentic-input {
@@ -422,15 +521,15 @@
 
 .agentic-input__shell {
   border: 1px solid #ced4da;
-  border-radius: 0.4rem;
-  background: #fff;
+  border-radius: var(--agentic-radius-sm);
+  background: var(--agentic-bg);
   overflow: hidden;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .agentic-input__shell:focus-within {
-  border-color: #80bdff;
-  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.15);
+  border-color: var(--agentic-accent);
+  box-shadow: 0 0 0 0.18rem rgba(37, 99, 235, 0.15);
 }
 
 .agentic-input__textarea {
@@ -453,8 +552,8 @@
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.5rem;
-  border-top: 1px solid #f1f3f5;
-  background: #fafbfc;
+  border-top: 1px solid var(--agentic-border);
+  background: var(--agentic-surface);
 }
 
 .agentic-input__toolbar-left,
@@ -473,11 +572,8 @@
 }
 
 /*
- * All three toolbar buttons (microphone, clear, send) share the exact
- * same square footprint so the input bar reads as a coherent unit.
- * Width / height are pinned to a fixed value to avoid Bootstrap's
- * btn-sm padding shifting one button half a pixel relative to the
- * others when the icon glyphs differ in width.
+ * All toolbar buttons (microphone, clear, send) share the same square
+ * footprint so the input bar reads as a coherent unit.
  */
 .agentic-input__btn,
 .agentic-input__send {
@@ -502,13 +598,44 @@
 
 /* Errors & completion ----------------------------------------------------- */
 
-.agentic-chat__error,
-.agentic-chat__completion {
+.agentic-chat__error {
   margin: 0;
+  border-radius: 0;
 }
 
-.agentic-chat__error {
-  border-radius: 0;
+/*
+ * Completion notice shown once the case is closed. The conversation above
+ * stays fully visible (read-only); this bar simply explains the state and
+ * — when enabled — offers a fresh thread.
+ */
+.agentic-chat__completion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.agentic-chat__completion-text {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  font-size: 0.9rem;
+  color: var(--agentic-muted);
+}
+
+.agentic-chat__completion-text p:last-child {
+  margin-bottom: 0;
+}
+
+.agentic-chat__completion-icon {
+  color: #16a34a;
+  flex: 0 0 auto;
+}
+
+.agentic-chat__new-thread {
+  flex: 0 0 auto;
 }
 
 /* Interrupt prompt cards -------------------------------------------------- */
@@ -518,14 +645,14 @@
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.75rem 1rem 1rem;
-  background: linear-gradient(180deg, #fff8e1 0%, #fffdf5 100%);
-  border-top: 1px solid #ffe082;
+  background: linear-gradient(180deg, #fffbeb 0%, #fffdf5 100%);
+  border-top: 1px solid #fde68a;
 }
 
 .agentic-interrupt-card {
-  border: 1px solid #ffd54f;
-  border-radius: 0.5rem;
-  background: #fffbe6;
+  border: 1px solid #fcd34d;
+  border-radius: var(--agentic-radius-sm);
+  background: #fffbeb;
   padding: 0.75rem 1rem;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
@@ -544,7 +671,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background-color: #ffb300;
+  background-color: #f59e0b;
   color: #fff;
   font-weight: 600;
   overflow: hidden;
@@ -565,22 +692,22 @@
 
 .agentic-interrupt-card__author {
   font-weight: 600;
-  color: #5d4037;
+  color: #92400e;
 }
 
 .agentic-interrupt-card__reason {
   font-size: 0.8rem;
-  color: #8d6e63;
+  color: #b45309;
   text-transform: capitalize;
 }
 
 .agentic-interrupt-card__counter {
-  color: #a1887f;
+  color: #d97706;
   text-transform: none;
 }
 
 .agentic-interrupt-card__body {
-  color: #3e2723;
+  color: #422006;
   font-size: 0.925rem;
   line-height: 1.4;
 }
@@ -608,9 +735,9 @@
 /* Debug panel ------------------------------------------------------------- */
 
 .agentic-debug {
-  border-top: 1px dashed #dee2e6;
+  border-top: 1px dashed var(--agentic-border);
   padding: 0.5rem 1rem;
-  background: #fafbfc;
+  background: var(--agentic-surface);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.75rem;
 }
@@ -634,7 +761,26 @@
 /* Responsive -------------------------------------------------------------- */
 
 @media (max-width: 576px) {
-  .agentic-msg__body { max-width: 92%; }
-  .agentic-personas { padding: 0.4rem; }
-  .agentic-input__count { display: none; }
+  .agentic-chat {
+    --agentic-bubble-max: 88%;
+    --agentic-window-max: 70vh;
+    border-radius: 0.6rem;
+  }
+
+  .agentic-chat__header,
+  .agentic-chat__footer {
+    padding: 0.6rem 0.75rem;
+  }
+
+  .agentic-chat__scroller {
+    padding: 0.75rem;
+  }
+
+  .agentic-chat__title {
+    font-size: 1rem;
+  }
+
+  .agentic-input__count {
+    display: none;
+  }
 }

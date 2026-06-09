@@ -81,8 +81,10 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
     onComplete: () => {
       // After the stream ends, sync from server so message ids match the
       // DB and the persisted pending_interrupts column matches what the
-      // RUN_FINISHED event carried.
-      void thread.refresh();
+      // RUN_FINISHED event carried. Do it SILENTLY (no full-screen
+      // spinner) so the conversation never flashes/jumps between the last
+      // streamed token and the reconciled history.
+      void thread.refresh({ silent: true });
     },
   });
 
@@ -150,7 +152,10 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
     setAutoStartFired(false);
     lastSyncedMessagesRef.current = '';
     lastSyncedInterruptsRef.current = '';
-    await thread.refresh();
+    // Sync silently: the UI is already cleared above, so a full-screen
+    // spinner here would be a needless flash before the fresh thread
+    // (auto-)starts.
+    await thread.refresh({ silent: true });
   }, [api, interrupts, messagesHook, runStatus, stream, thread]);
 
   /**
@@ -238,8 +243,13 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
     );
   }
 
+  const caseClosed = runStatus.caseClosed || (thread.thread?.isCompleted ?? false);
   const showStart =
-    !config.autoStart && messagesHook.messages.length === 0 && !runStatus.caseClosed;
+    !config.autoStart && messagesHook.messages.length === 0 && !caseClosed;
+  // The "start a new thread" button is gated by the section flag so a
+  // finished conversation can be locked read-only when desired.
+  const showReset =
+    config.showNewThreadButton && (messagesHook.messages.length > 0 || caseClosed);
 
   return (
     <ChatShell
@@ -252,10 +262,10 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
       handoffTarget={messagesHook.handoffTarget}
       status={runStatus.status}
       isStreaming={stream.isStreaming}
-      caseClosed={runStatus.caseClosed || (thread.thread?.isCompleted ?? false)}
+      caseClosed={caseClosed}
       errorMessage={runStatus.error || thread.error}
       showStart={showStart}
-      showReset={messagesHook.messages.length > 0 || runStatus.caseClosed}
+      showReset={showReset}
       showPersonaStrip={config.showPersonaStrip}
       showRunStatus={config.showRunStatus}
       showDebug={config.showDebug}

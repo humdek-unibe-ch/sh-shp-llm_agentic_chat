@@ -69,6 +69,12 @@ export interface AgenticChatConfig {
   showPersonaStrip: boolean;
   showRunStatus: boolean;
   /**
+   * Whether to offer a "start a new thread" button once the conversation
+   * is complete. When false, a finished conversation stays visible but
+   * read-only (no new thread can be started). Button label = resetLabel.
+   */
+  showNewThreadButton: boolean;
+  /**
    * Resolved, ordered persona list for this section — the mediator
    * (when enabled) at index 0 followed by the personas chosen for this
    * section (selection -> fallback resolution happens server-side).
