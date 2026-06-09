@@ -20,11 +20,16 @@ require_once __DIR__ . "/../../../service/AgenticChatService.php";
  * Section-level fields read by this model
  * ---------------------------------------
  *  agentic_chat_personas_to_use (agentic-chat-personas-select, internal)
- *      JSON array of persona keys (subset of the global persona library
+ *      Ordered CSV of persona keys (subset of the global persona library
  *      defined on the admin page sh_module_llm_agentic_chat). When empty
- *      every enabled persona from the global library is used. Rendered
- *      in the CMS by the `AgenticChatHooks::outputFieldPersonasSelect*`
- *      hooks as a Bootstrap multi-select.
+ *      every enabled persona from the global library is used, in library
+ *      order. Rendered in the CMS by the
+ *      `AgenticChatHooks::outputFieldPersonasSelect*` hooks as a
+ *      Bootstrap multi-select; the resolved order follows the global
+ *      library order.
+ *  agentic_chat_use_group_chat_mediator (checkbox, internal)
+ *      Whether the backend builds a group-chat mediator for this
+ *      section's threads. Defaults to enabled.
  *  agentic_chat_auto_start (checkbox, internal)
  *      Send the AG-UI kickoff token as soon as the section opens.
  *  agentic_chat_show_persona_strip (checkbox, internal)
@@ -40,9 +45,10 @@ require_once __DIR__ . "/../../../service/AgenticChatService.php";
  *  agentic_chat_title / agentic_chat_description / agentic_chat_*_label
  *      Translatable user-visible strings shown in the chat surface.
  *
- * Module / reflection text injected into AG-UI threads is read from the
- * **global** `agentic_chat_default_module` field on the admin page; it
- * cannot be overridden per section.
+ * Module / reflection text injected into AG-UI threads as `module_content`
+ * resolves section-first: the translatable section field
+ * `agentic_chat_context` overrides the global `agentic_chat_default_module`
+ * from the admin page when set (see `getModuleContent()`).
  *
  * @package LLM Agentic Chat Plugin
  * @since   v1.0.0
@@ -123,6 +129,18 @@ class AgenticChatModel extends StyleModel
         return $this->get_db_field('agentic_chat_show_run_status', '1') === '1';
     }
 
+    /**
+     * Whether the backend should build a group-chat mediator for this
+     * section's threads. Defaults to enabled.
+     *
+     * @return bool
+     */
+    public function isGroupChatMediatorEnabled()
+    {
+        $default = AGENTIC_CHAT_DEFAULT_USE_MEDIATOR ? '1' : '0';
+        return $this->get_db_field('agentic_chat_use_group_chat_mediator', $default) === '1';
+    }
+
     /* =========================================================================
      * SPEECH-TO-TEXT
      * ========================================================================= */
@@ -199,58 +217,54 @@ class AgenticChatModel extends StyleModel
 
     /**
      * Return the personas the React UI should render in the strip /
-     * message bubbles. This is the **resolved** set: the section's
-     * selected personas (where they map to a known slot type) plus the
-     * fallback global persona for each slot type the section did not
-     * pick. The fixed mediator is appended separately so the chat
-     * surface can render its avatar/name.
+     * message bubbles. This is the resolved, ORDERED set the section
+     * uses (its curated selection in order, or every enabled global
+     * persona). The fixed mediator descriptor is prepended (when the
+     * section enables the mediator) so the chat surface can render its
+     * avatar/name.
      *
      * @return array<int, array<string, mixed>>
      */
     public function getActivePersonas()
     {
-        $slotPersonas = $this->getResolvedSlotPersonas();
-
-        // Append the fixed mediator descriptor first so it shows up at
-        // the start of the persona strip.
-        $personas = [AGENTIC_CHAT_MEDIATOR_PERSONA];
-
-        foreach (AGENTIC_CHAT_PERSONA_SLOT_TYPES as $slotType) {
-            if (isset($slotPersonas[$slotType])) {
-                $personas[] = $slotPersonas[$slotType];
-            }
+        $personas = [];
+        if ($this->isGroupChatMediatorEnabled()) {
+            $personas[] = AGENTIC_CHAT_MEDIATOR_PERSONA;
+        }
+        foreach ($this->getResolvedPersonas() as $persona) {
+            $personas[] = $persona;
         }
         return $personas;
     }
 
     /**
-     * Resolve teacher slot types to global persona objects using the
-     * section's selection + first-enabled fallback. Cached per request.
+     * Resolve the ordered persona list this section sends to the
+     * backend: the section's curated selection (in order) or every
+     * enabled global persona when nothing was curated.
      *
-     * @return array<string, array<string, mixed>>
+     * @return array<int, array<string, mixed>>
      */
-    public function getResolvedSlotPersonas()
+    public function getResolvedPersonas()
     {
         $globalPersonas = $this->agenticService->getGlobalConfig()['personas'];
         $selectedKeys = $this->getSelectedPersonaKeys();
         return $this->agenticService
             ->getPersonaService()
-            ->resolveSlotPersonas($globalPersonas, $selectedKeys);
+            ->resolvePersonas($globalPersonas, $selectedKeys);
     }
 
     /**
-     * Build the backend slot -> persona key map for this section.
-     * Mediator always points to the fixed mediator key; teacher slots
-     * point to the resolved persona key (selection -> fallback ->
-     * unassigned).
+     * Build the participant map (backend slot -> persona key) for this
+     * section: `mediator` -> mediator key, `persona_1` -> first persona
+     * key, `persona_2` -> second, etc.
      *
      * @return array<string, string>
      */
-    public function buildBackendSlotMap()
+    public function buildParticipantMap()
     {
         return $this->agenticService
             ->getPersonaService()
-            ->buildBackendSlotKeyMap($this->getResolvedSlotPersonas());
+            ->buildParticipantMap($this->getResolvedPersonas());
     }
 
     /* =========================================================================
@@ -309,14 +323,15 @@ class AgenticChatModel extends StyleModel
             'showDebug'          => $this->isDebugVisible(),
             'showPersonaStrip'   => $this->isPersonaStripVisible(),
             'showRunStatus'      => $this->isRunStatusVisible(),
-            // `personas` already includes the fixed mediator at index 0
-            // followed by the resolved teacher variants, so the chat UI
-            // can look any speaker up by key in a single array.
-            'personas'           => $this->getActivePersonas(),
-            'personaSlotMap'     => $this->buildBackendSlotMap(),
-            'backendSlots'       => AGENTIC_CHAT_BACKEND_SLOTS,
-            'mediator'           => AGENTIC_CHAT_MEDIATOR_PERSONA,
-            'slotTypes'          => AGENTIC_CHAT_PERSONA_SLOT_TYPES,
+            // `personas` includes the mediator (when enabled) at index 0
+            // followed by the resolved persona list in order, so the chat
+            // UI can look any speaker up by key in a single array.
+            'personas'             => $this->getActivePersonas(),
+            // Participant map: backend slot -> persona key, used to
+            // attribute streamed messages (mediator, persona_1, …).
+            'personaSlotMap'       => $this->buildParticipantMap(),
+            'mediator'             => AGENTIC_CHAT_MEDIATOR_PERSONA,
+            'useGroupChatMediator' => $this->isGroupChatMediatorEnabled(),
             'enableSpeechToText' => $this->isSpeechToTextEnabled(),
             'speechToTextModel'  => $this->getSpeechToTextModel(),
             'labels'             => $this->getLabels(),

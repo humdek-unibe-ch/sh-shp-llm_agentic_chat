@@ -19,8 +19,8 @@
 --   5. Creates the `agenticChatThreads` table linking llmConversations
 --      to AG-UI thread metadata.
 --   6. Registers transaction logging and thread-status lookups.
---      (Persona role lookups were removed in v1.1.0; persona slot
---       types are declared in globals.php instead.)
+--      (Personas are an ordered, flexible library — there are no fixed
+--       persona slot types; the mediator is toggled per section.)
 --   7. Registers hooks for the personas-editor field, the admin panel,
 --      and the section-level personas multi-select picker.
 -- =============================================================================
@@ -55,7 +55,6 @@ INSERT IGNORE INTO `fields` (`id`, `name`, `id_type`, `display`) VALUES
 (NULL, 'agentic_chat_backend_url',          get_field_type_id('text'),     '0'),
 (NULL, 'agentic_chat_reflect_path',         get_field_type_id('text'),     '0'),
 (NULL, 'agentic_chat_configure_path',       get_field_type_id('text'),     '0'),
-(NULL, 'agentic_chat_defaults_path',        get_field_type_id('text'),     '0'),
 (NULL, 'agentic_chat_health_path',          get_field_type_id('text'),     '0'),
 (NULL, 'agentic_chat_timeout',              get_field_type_id('number'),   '0'),
 (NULL, 'agentic_chat_default_module',       get_field_type_id('textarea'), '0'),
@@ -69,11 +68,10 @@ INSERT IGNORE INTO `pageType_fields` (`id_pageType`, `id_fields`, `default_value
 ((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_backend_url'), 'https://tpf-test.humdek.unibe.ch/forestBackend', 'Base URL of the AG-UI backend (no trailing slash). Example: https://tpf-test.humdek.unibe.ch/forestBackend'),
 ((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_reflect_path'), '/reflect', 'AG-UI run endpoint path (POST, returns text/event-stream).'),
 ((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_configure_path'), '/reflect/configure', 'Per-thread configuration endpoint path (POST).'),
-((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_defaults_path'), '/reflect/defaults', 'Endpoint that returns default module text and persona instruction templates (GET).'),
 ((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_health_path'), '/health', 'Liveness probe endpoint (GET, no LLM cost).'),
 ((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_timeout'), '120', 'Default request timeout in seconds for backend calls.'),
 ((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_default_module'), '', 'Default module / reflection text injected into every new AG-UI thread when the section does not provide its own.'),
-((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_personas'), '[{"key":"foundational_teacher","name":"Foundational Teacher","slot_type":"foundational","instructions":"You are the foundational teacher persona. Explain core ideas clearly and connect them to the module content: {module_content}","color":"#0d6efd","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/foundational-teacher.svg","enabled":true},{"key":"inclusive_teacher","name":"Inclusive Teacher","slot_type":"inclusive","instructions":"You are the inclusive teacher persona. Adapt the reflection to diverse perspectives and keep the tone supportive. Module content: {module_content}","color":"#198754","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inclusive-teacher.svg","enabled":true},{"key":"inquiry_teacher","name":"Inquiry Teacher","slot_type":"inquiry","instructions":"You are the inquiry teacher persona. Ask thoughtful questions that help the learner examine assumptions and evidence. Module content: {module_content}","color":"#6f42c1","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inquiry-teacher.svg","enabled":true}]', 'Global library of teacher persona variants. Each persona has: key (auto-generated slug), name, slot_type (foundational/inclusive/inquiry), instructions, color, avatar asset path, enabled. The mediator is fixed in the backend and not configurable here.'),
+((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_personas'), '[{"key":"lea","name":"Lea","description":"A foundational teacher. Explain core ideas clearly and keep the reflection grounded and approachable.","color":"#0d6efd","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/foundational-teacher.svg","enabled":true},{"key":"anja","name":"Anja","description":"An inclusive teacher. Adapt the reflection to diverse perspectives and keep the tone supportive.","color":"#198754","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inclusive-teacher.svg","enabled":true},{"key":"elias","name":"Elias","description":"An inquiry-driven teacher. Ask thoughtful questions that help the learner examine assumptions and evidence.","color":"#6f42c1","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inquiry-teacher.svg","enabled":true}]', 'Ordered, flexible library of teacher personas. Each persona has: key (auto-generated slug), name, description (role + style system prompt sent to the backend), color, avatar asset path, enabled. Sections pick + order which personas take part and toggle the group-chat mediator; the mediator itself is built by the backend.'),
 ((SELECT id FROM pageType WHERE `name` = 'sh_module_llm_agentic_chat'), get_field_id('agentic_chat_panel'), NULL, 'Quick-link panel rendered above the form on the admin page.');
 
 
@@ -116,11 +114,10 @@ INSERT IGNORE INTO `pages_fields` (`id_pages`, `id_fields`, `default_value`, `he
 (@id_page_agentic_config, get_field_id('agentic_chat_backend_url'),    'https://tpf-test.humdek.unibe.ch/forestBackend', 'Base URL of the AG-UI backend (no trailing slash).'),
 (@id_page_agentic_config, get_field_id('agentic_chat_reflect_path'),   '/reflect',           'AG-UI run endpoint path.'),
 (@id_page_agentic_config, get_field_id('agentic_chat_configure_path'), '/reflect/configure', 'Per-thread configuration endpoint path.'),
-(@id_page_agentic_config, get_field_id('agentic_chat_defaults_path'),  '/reflect/defaults',  'Defaults endpoint path.'),
 (@id_page_agentic_config, get_field_id('agentic_chat_health_path'),    '/health',            'Liveness probe endpoint.'),
 (@id_page_agentic_config, get_field_id('agentic_chat_timeout'),        '120',                'Backend request timeout (seconds).'),
 (@id_page_agentic_config, get_field_id('agentic_chat_default_module'), '',                   'Default module text injected into new threads.'),
-(@id_page_agentic_config, get_field_id('agentic_chat_personas'),       '[{"key":"foundational_teacher","name":"Foundational Teacher","slot_type":"foundational","instructions":"You are the foundational teacher persona. Explain core ideas clearly and connect them to the module content: {module_content}","color":"#0d6efd","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/foundational-teacher.svg","enabled":true},{"key":"inclusive_teacher","name":"Inclusive Teacher","slot_type":"inclusive","instructions":"You are the inclusive teacher persona. Adapt the reflection to diverse perspectives and keep the tone supportive. Module content: {module_content}","color":"#198754","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inclusive-teacher.svg","enabled":true},{"key":"inquiry_teacher","name":"Inquiry Teacher","slot_type":"inquiry","instructions":"You are the inquiry teacher persona. Ask thoughtful questions that help the learner examine assumptions and evidence. Module content: {module_content}","color":"#6f42c1","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inquiry-teacher.svg","enabled":true}]', 'Global library of teacher persona variants (JSON array, slot_type-tagged).'),
+(@id_page_agentic_config, get_field_id('agentic_chat_personas'),       '[{"key":"lea","name":"Lea","description":"A foundational teacher. Explain core ideas clearly and keep the reflection grounded and approachable.","color":"#0d6efd","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/foundational-teacher.svg","enabled":true},{"key":"anja","name":"Anja","description":"An inclusive teacher. Adapt the reflection to diverse perspectives and keep the tone supportive.","color":"#198754","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inclusive-teacher.svg","enabled":true},{"key":"elias","name":"Elias","description":"An inquiry-driven teacher. Ask thoughtful questions that help the learner examine assumptions and evidence.","color":"#6f42c1","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inquiry-teacher.svg","enabled":true}]', 'Ordered, flexible library of teacher personas (JSON array of {key,name,description,color,avatar,enabled}).'),
 (@id_page_agentic_config, get_field_id('agentic_chat_panel'),          NULL,                 'Quick-link panel.');
 
 
@@ -143,11 +140,10 @@ INSERT IGNORE INTO `pages_fields_translation` (`id_pages`, `id_fields`, `id_lang
 (@id_page_agentic_config, get_field_id('agentic_chat_backend_url'),    '0000000001', 'https://tpf-test.humdek.unibe.ch/forestBackend'),
 (@id_page_agentic_config, get_field_id('agentic_chat_reflect_path'),   '0000000001', '/reflect'),
 (@id_page_agentic_config, get_field_id('agentic_chat_configure_path'), '0000000001', '/reflect/configure'),
-(@id_page_agentic_config, get_field_id('agentic_chat_defaults_path'),  '0000000001', '/reflect/defaults'),
 (@id_page_agentic_config, get_field_id('agentic_chat_health_path'),    '0000000001', '/health'),
 (@id_page_agentic_config, get_field_id('agentic_chat_timeout'),        '0000000001', '120'),
 (@id_page_agentic_config, get_field_id('agentic_chat_default_module'), '0000000001', ''),
-(@id_page_agentic_config, get_field_id('agentic_chat_personas'),       '0000000001', '[{"key":"foundational_teacher","name":"Foundational Teacher","slot_type":"foundational","instructions":"You are the foundational teacher persona. Explain core ideas clearly and connect them to the module content: {module_content}","color":"#0d6efd","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/foundational-teacher.svg","enabled":true},{"key":"inclusive_teacher","name":"Inclusive Teacher","slot_type":"inclusive","instructions":"You are the inclusive teacher persona. Adapt the reflection to diverse perspectives and keep the tone supportive. Module content: {module_content}","color":"#198754","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inclusive-teacher.svg","enabled":true},{"key":"inquiry_teacher","name":"Inquiry Teacher","slot_type":"inquiry","instructions":"You are the inquiry teacher persona. Ask thoughtful questions that help the learner examine assumptions and evidence. Module content: {module_content}","color":"#6f42c1","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inquiry-teacher.svg","enabled":true}]');
+(@id_page_agentic_config, get_field_id('agentic_chat_personas'),       '0000000001', '[{"key":"lea","name":"Lea","description":"A foundational teacher. Explain core ideas clearly and keep the reflection grounded and approachable.","color":"#0d6efd","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/foundational-teacher.svg","enabled":true},{"key":"anja","name":"Anja","description":"An inclusive teacher. Adapt the reflection to diverse perspectives and keep the tone supportive.","color":"#198754","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inclusive-teacher.svg","enabled":true},{"key":"elias","name":"Elias","description":"An inquiry-driven teacher. Ask thoughtful questions that help the learner examine assumptions and evidence.","color":"#6f42c1","avatar":"/server/plugins/sh-shp-llm_agentic_chat/assets/avatars/inquiry-teacher.svg","enabled":true}]');
 
 
 -- -- Admin permissions.
@@ -226,6 +222,7 @@ VALUES (NULL, 'agentic-chat-personas-select', '121');
 -- -- Internal (display=0): runtime / behaviour configuration.
 INSERT IGNORE INTO `fields` (`id`, `name`, `id_type`, `display`) VALUES
 (NULL, 'agentic_chat_personas_to_use',   get_field_type_id('agentic-chat-personas-select'), '0'),
+(NULL, 'agentic_chat_use_group_chat_mediator', get_field_type_id('checkbox'), '0'),
 (NULL, 'agentic_chat_auto_start',        get_field_type_id('checkbox'), '0'),
 (NULL, 'agentic_chat_show_persona_strip', get_field_type_id('checkbox'), '0'),
 (NULL, 'agentic_chat_show_run_status',    get_field_type_id('checkbox'), '0');
@@ -255,7 +252,8 @@ INSERT IGNORE INTO `styles_fields` (`id_styles`, `id_fields`, `default_value`, `
 (get_style_id('agenticChat'), get_field_id('data_config'), '',   'The field `dataConfig` allows to configure data sources for the component.'),
 
 -- internal
-(get_style_id('agenticChat'), get_field_id('agentic_chat_personas_to_use'), '', 'Pick which teacher persona variants (foundational / inclusive / inquiry) take part in this section. At most one persona per slot type may be selected; the plugin uses the persona''s slot_type to map it onto the corresponding backend slot. Slot types not picked here fall back to the first enabled persona of that slot type in the global library. The mediator is fixed in the backend and is not selectable.'),
+(get_style_id('agenticChat'), get_field_id('agentic_chat_personas_to_use'), '', 'Pick which personas take part in this section''s chat. The personas are sent to the backend in the global library order; leave empty to use every enabled persona. Reorder the global persona library on the admin page to change the order. The mediator is built by the backend and is toggled with the option below.'),
+(get_style_id('agenticChat'), get_field_id('agentic_chat_use_group_chat_mediator'), '1', 'When enabled (default), the backend builds a group-chat mediator that coordinates the personas and decides when each one speaks. Disable to let the configured personas drive the conversation directly without a mediator.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_auto_start'),       '1',   'When enabled, the chat sends the kickoff token __auto_start__ as soon as the user opens the section.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_show_persona_strip'), '1', 'Show the strip with active/visited persona avatars above the messages.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_show_run_status'),    '1', 'Show the small run-status badge in the chat header.'),
@@ -296,8 +294,9 @@ CREATE TABLE IF NOT EXISTS `agenticChatThreads` (
     `agui_thread_id`           VARCHAR(64) NOT NULL,
     `last_run_id`              VARCHAR(64) DEFAULT NULL,
     `backend_url`              VARCHAR(512) NOT NULL,
-    `persona_slot_map`         LONGTEXT DEFAULT NULL COMMENT 'JSON: backend slot -> persona key',
+    `persona_slot_map`         LONGTEXT DEFAULT NULL COMMENT 'JSON participant map: backend slot (mediator, persona_1, …) -> persona key',
     `module_content`           LONGTEXT DEFAULT NULL COMMENT 'Module/reflection text sent to /reflect/configure',
+    `use_group_chat_mediator`  TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'Whether this thread was configured with a group-chat mediator',
     `pending_interrupts`       LONGTEXT DEFAULT NULL COMMENT 'JSON array of AG-UI interrupts awaiting user input',
     `status`                   VARCHAR(32) NOT NULL DEFAULT 'idle' COMMENT 'idle, configuring, running, awaiting_input, completed, failed',
     `is_completed`             TINYINT(1) NOT NULL DEFAULT 0,
@@ -325,7 +324,7 @@ CREATE TABLE IF NOT EXISTS `agenticChatThreads` (
 
 
 -- -----------------------------------------------------------------------------
--- 5) Lookups (transaction-by + persona role types)
+-- 5) Lookups (transaction-by + thread status values)
 -- -----------------------------------------------------------------------------
 INSERT IGNORE INTO `lookups` (`type_code`, `lookup_code`, `lookup_value`, `lookup_description`)
 VALUES

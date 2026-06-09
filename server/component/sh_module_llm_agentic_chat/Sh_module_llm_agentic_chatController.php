@@ -15,7 +15,6 @@ require_once __DIR__ . "/../../service/AgenticChatBackendClient.php";
  *   GET  ?action=get_config         Return decoded settings + ACL flags.
  *   POST ?action=save_config        Persist allow-listed fields.
  *   POST ?action=save_personas      Persist the persona array (JSON body).
- *   GET  ?action=fetch_defaults     Call the backend's /reflect/defaults.
  *   GET  ?action=health_check       Call the backend's /health.
  *
  * All endpoints require ACL "select" or "update" on the config page.
@@ -62,10 +61,6 @@ class Sh_module_llm_agentic_chatController extends BaseController
                 case 'save_personas':
                     $this->requireAccess('update');
                     $this->handleSavePersonas();
-                    break;
-                case 'fetch_defaults':
-                    $this->requireAccess('select');
-                    $this->handleFetchDefaults();
                     break;
                 case 'health_check':
                     $this->requireAccess('select');
@@ -131,7 +126,6 @@ class Sh_module_llm_agentic_chatController extends BaseController
             'agentic_chat_backend_url',
             'agentic_chat_reflect_path',
             'agentic_chat_configure_path',
-            'agentic_chat_defaults_path',
             'agentic_chat_health_path',
             'agentic_chat_timeout',
             'agentic_chat_default_module',
@@ -179,29 +173,6 @@ class Sh_module_llm_agentic_chatController extends BaseController
             'personas' => $normalised,
             'count' => count($normalised),
         ]);
-    }
-
-    /** Forward GET /reflect/defaults from the backend. */
-    private function handleFetchDefaults()
-    {
-        $client = new AgenticChatBackendClient(
-            $this->model->getSetting('agentic_chat_backend_url', AGENTIC_CHAT_DEFAULT_BACKEND_URL),
-            (int) $this->model->getSetting('agentic_chat_timeout', AGENTIC_CHAT_DEFAULT_TIMEOUT)
-        );
-
-        $result = $client->getDefaults($this->model->getSetting(
-            'agentic_chat_defaults_path',
-            AGENTIC_CHAT_DEFAULT_DEFAULTS_PATH
-        ));
-
-        if (!$result['ok']) {
-            $this->sendJsonResponse([
-                'error' => $result['error'] ?? 'Unknown backend error',
-                'status' => $result['status'] ?? 0,
-            ], 502);
-        }
-
-        $this->sendJsonResponse(['defaults' => $result['data']]);
     }
 
     /** Liveness probe against the backend's /health endpoint. */

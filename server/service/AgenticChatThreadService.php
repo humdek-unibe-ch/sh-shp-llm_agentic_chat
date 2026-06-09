@@ -169,6 +169,7 @@ class AgenticChatThreadService
             'last_run_id',
             'persona_slot_map',
             'module_content',
+            'use_group_chat_mediator',
             'pending_interrupts',
             'status',
             'is_completed',

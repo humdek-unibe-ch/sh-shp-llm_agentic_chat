@@ -18,8 +18,9 @@
  * Log line format (UTF-8, one entry per line):
  *
  *   [YYYY-MM-DD HH:MM:SS] thread=<agui_thread_id> run=<run_id>
- *   slot=<authorSlot> persona=<authorPersonaKey> name=<authorName>
- *   kind=<message|interrupt> text=<single-line, newlines escaped as \n>
+ *   executor=<sourceExecutorId> slot=<authorSlot> persona=<authorPersonaKey>
+ *   name=<authorName> kind=<message|interrupt>
+ *   text=<single-line, newlines escaped as \n>
  *
  * The logger is best-effort: if the file cannot be opened it silently
  * falls back to PHP's `error_log` so chat streaming is never blocked
@@ -105,6 +106,7 @@ class AgenticChatTranscriptLogger
         $timestamp = date('Y-m-d H:i:s');
         $threadId = isset($thread['agui_thread_id']) ? (string) $thread['agui_thread_id'] : '';
         $runId = isset($thread['last_run_id']) ? (string) $thread['last_run_id'] : '';
+        $executor = isset($attribution['sourceExecutorId']) ? (string) $attribution['sourceExecutorId'] : '';
         $slot = isset($attribution['authorSlot']) ? (string) $attribution['authorSlot'] : '';
         $persona = isset($attribution['authorPersonaKey']) ? (string) $attribution['authorPersonaKey'] : '';
         $name = isset($attribution['authorName']) ? (string) $attribution['authorName'] : '';
@@ -118,10 +120,11 @@ class AgenticChatTranscriptLogger
         ]);
 
         $line = sprintf(
-            "[%s] thread=%s run=%s slot=%s persona=%s name=%s kind=%s text=%s\n",
+            "[%s] thread=%s run=%s executor=%s slot=%s persona=%s name=%s kind=%s text=%s\n",
             $timestamp,
             $threadId !== '' ? $threadId : '-',
             $runId !== '' ? $runId : '-',
+            $executor !== '' ? $executor : '-',
             $slot !== '' ? $slot : '-',
             $persona !== '' ? $persona : '-',
             $name !== '' ? $name : '-',

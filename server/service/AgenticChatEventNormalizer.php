@@ -34,39 +34,65 @@
 class AgenticChatEventNormalizer
 {
     /**
-     * Canonical executor-id → backend slot key mapping.
+     * Executor-ids that always resolve to the group-chat mediator slot,
+     * regardless of how many personas the section configured.
      *
-     * The upstream HandoffBuilder names its agents using fixed ids:
-     *   - group_chat_mediator   → mediator slot
-     *   - persona_1_teacher     → persona_1 slot
-     *   - persona_2_teacher     → persona_2 slot
-     *   - persona_3_teacher     → persona_3 slot
-     *
-     * This map is used to resolve an event's `authorName` /
-     * `sourceExecutorId` back to a slot, and then – via the section's
-     * slot map – to a persona key.
-     *
-     * The legacy executor names (`foundational_teacher`, …) are kept
-     * here so existing threads created against the previous backend
-     * iteration still attribute correctly when the chat is reopened.
-     *
-     * @var array<string, string>
+     * @var array<int, string>
      */
-    private static $executorToSlot = [
-        // FoResTCHAT current backend.
-        'group_chat_mediator'     => 'mediator',
-        'persona_1_teacher'       => 'persona_1',
-        'persona_2_teacher'       => 'persona_2',
-        'persona_3_teacher'       => 'persona_3',
-        // Aliases the upstream framework sometimes emits.
-        'group_chat_moderator'    => 'mediator',
-        'group_chat_orchestrator' => 'mediator',
-        'triage_agent'            => 'mediator',
-        // Legacy executor ids (semantic-slot backend; kept for older threads).
-        'foundational_teacher'    => 'persona_1',
-        'inclusive_teacher'       => 'persona_2',
-        'inquiry_teacher'         => 'persona_3',
+    private static $mediatorExecutors = [
+        'group_chat_mediator',
+        'group_chat_moderator',
+        'group_chat_orchestrator',
+        'triage_agent',
     ];
+
+    /**
+     * Resolve a backend executor id to a participant-map slot key.
+     *
+     * The backend names its agents positionally from the configured
+     * persona list:
+     *   - group_chat_mediator   → mediator
+     *   - persona_<N>_teacher   → persona_<N>   (1-indexed, dynamic)
+     *
+     * Returns null for ids that are not recognised as a participant
+     * (e.g. internal workflow steps like `superstep:1`).
+     *
+     * @param string|null $executorId
+     * @return string|null Slot key (e.g. "mediator", "persona_2") or null.
+     */
+    private function executorToSlotKey($executorId)
+    {
+        if (!is_string($executorId) || $executorId === '') {
+            return null;
+        }
+        if (in_array($executorId, self::$mediatorExecutors, true)) {
+            return AGENTIC_CHAT_SLOT_MEDIATOR;
+        }
+        // persona_1_teacher, persona_2_teacher, … → persona_1, persona_2, …
+        if (preg_match('/^(persona_\d+)_teacher$/', $executorId, $m)) {
+            return $m[1];
+        }
+        // Already a bare slot key (persona_3) or the mediator key.
+        if ($executorId === AGENTIC_CHAT_SLOT_MEDIATOR) {
+            return AGENTIC_CHAT_SLOT_MEDIATOR;
+        }
+        if (preg_match('/^persona_\d+$/', $executorId)) {
+            return $executorId;
+        }
+        return null;
+    }
+
+    /**
+     * Whether the given executor id is a recognised participant (and so
+     * a safe value for the `currentExecutorId` fallback).
+     *
+     * @param string|null $executorId
+     * @return bool
+     */
+    private function isKnownExecutor($executorId)
+    {
+        return $this->executorToSlotKey($executorId) !== null;
+    }
 
     /**
      * Stateful field: the executor that the upstream workflow is
@@ -340,14 +366,13 @@ class AgenticChatEventNormalizer
         //
         // We deliberately do NOT fill `sourceExecutorId` from the
         // tracked currentExecutorId when an `authorName` was already
-        // recovered from `agent_response`: the FoResTCHAT workflow
-        // ends every run with a silent `superstep:1` that fans out to
-        // foundational/inclusive/inquiry teachers in turn (each with
+        // recovered from `agent_response`: the backend workflow ends
+        // every run with a silent `superstep:N` that fans out to each
+        // configured persona_<N>_teacher in turn (each with
         // `should_respond: false`). The last STEP_STARTED before
-        // RUN_FINISHED is therefore `inquiry_teacher`, not the
-        // mediator who actually raised the interrupt — using it would
-        // mis-attribute every mediator interrupt to the inquiry
-        // teacher persona.
+        // RUN_FINISHED is therefore the last persona, not the mediator
+        // who actually raised the interrupt — using it would
+        // mis-attribute every mediator interrupt to that persona.
         if ($sourceExecutorId === null && $authorName === null && $this->currentExecutorId !== null) {
             $sourceExecutorId = $this->currentExecutorId;
             $authorName = $this->currentExecutorId;
@@ -363,7 +388,7 @@ class AgenticChatEventNormalizer
         // not on `RUN_FINISHED.interrupt[].value`).
         $resolveSpeakerId = $authorName ?? $sourceExecutorId;
         if ($resolveSpeakerId !== null) {
-            $slotKey = self::$executorToSlot[$resolveSpeakerId] ?? null;
+            $slotKey = $this->executorToSlotKey($resolveSpeakerId);
             if ($slotKey !== null && isset($slotMap[$slotKey])) {
                 $personaKey = (string) $slotMap[$slotKey];
             }
@@ -556,7 +581,7 @@ class AgenticChatEventNormalizer
             return null;
         }
 
-        $slot = self::$executorToSlot[$candidate] ?? null;
+        $slot = $this->executorToSlotKey($candidate);
         $personaKey = ($slot !== null && isset($slotMap[$slot]))
             ? (string) $slotMap[$slot]
             : null;
@@ -618,7 +643,7 @@ class AgenticChatEventNormalizer
 
         if ($type === 'STEP_STARTED') {
             $stepName = $event['stepName'] ?? $event['step_name'] ?? null;
-            if (is_string($stepName) && isset(self::$executorToSlot[$stepName])) {
+            if (is_string($stepName) && $this->isKnownExecutor($stepName)) {
                 $this->currentExecutorId = $stepName;
             }
             return;
@@ -630,7 +655,7 @@ class AgenticChatEventNormalizer
                 $executorId = $content['executor_id'] ?? $content['executorId'] ?? null;
                 $status = $content['status'] ?? null;
                 if (is_string($executorId)
-                    && isset(self::$executorToSlot[$executorId])
+                    && $this->isKnownExecutor($executorId)
                     && $status !== 'completed'
                 ) {
                     $this->currentExecutorId = $executorId;

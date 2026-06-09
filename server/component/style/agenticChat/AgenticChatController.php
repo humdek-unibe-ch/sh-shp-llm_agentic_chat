@@ -172,9 +172,10 @@ class AgenticChatController extends BaseController
     /**
      * Configure the active thread on the backend.
      *
-     * The persona slot map is rebuilt from the section configuration on
-     * the server side - the React frontend is not allowed to override it.
-     * Module content is always read from the global plugin configuration.
+     * The ordered persona list + mediator toggle are rebuilt from the
+     * section configuration on the server side - the React frontend is
+     * not allowed to override them. Module content is always read from
+     * the global plugin configuration.
      *
      * NOTE: this call is **not** idempotent on the upstream side - every
      * `/reflect/configure` invocation clears the cached workflow for the
@@ -189,10 +190,13 @@ class AgenticChatController extends BaseController
         $sectionId = $this->model->getSectionId();
         $thread = $this->service->getOrCreateThread($userId, $sectionId);
 
-        // Resolve the section's slot_type -> persona variants (with
-        // global fallback) and configure the backend thread with them.
-        $slotPersonas = $this->model->getResolvedSlotPersonas();
-        $result = $this->service->configureThread($thread, $slotPersonas);
+        // Resolve the section's ordered persona list (with global
+        // fallback), mediator toggle and module content (section
+        // override or global default) and configure the backend thread.
+        $personas = $this->model->getResolvedPersonas();
+        $useMediator = $this->model->isGroupChatMediatorEnabled();
+        $moduleContent = $this->model->getModuleContent();
+        $result = $this->service->configureThread($thread, $personas, $useMediator, $moduleContent);
 
         $thread = $this->service->getThreadService()->getThreadById($thread['id']);
 
@@ -260,8 +264,17 @@ class AgenticChatController extends BaseController
         // the user has to start a new thread to recover. The cost of
         // that edge case is acceptable; clobbering active interrupts
         // on every turn is not.
-        $slotPersonas = $this->model->getResolvedSlotPersonas();
-        $slotMap = $this->service->getPersonaService()->buildBackendSlotKeyMap($slotPersonas);
+        //
+        // Speaker attribution uses the participant map persisted on the
+        // thread at configure time (so it survives even if the section's
+        // persona selection later changes). Fall back to recomputing it
+        // from the current section config for legacy rows without one.
+        $slotMap = !empty($thread['persona_slot_map'])
+            ? json_decode((string) $thread['persona_slot_map'], true)
+            : null;
+        if (!is_array($slotMap) || empty($slotMap)) {
+            $slotMap = $this->model->buildParticipantMap();
+        }
 
         $message = isset($_POST['message']) ? (string) $_POST['message'] : null;
         $resumeRaw = $_POST['resume'] ?? null;
@@ -542,6 +555,8 @@ class AgenticChatController extends BaseController
                 'isCompleted'       => (int) ($thread['is_completed'] ?? 0) === 1,
                 'lastError'         => $thread['last_error'] ?? null,
                 'personaSlotMap'    => is_array($slotMap) ? $slotMap : new stdClass(),
+                'useGroupChatMediator' => !isset($thread['use_group_chat_mediator'])
+                    || (int) $thread['use_group_chat_mediator'] === 1,
                 'moduleContent'     => $thread['module_content'] ?? null,
                 'pendingInterrupts' => $pendingInterrupts,
                 'awaitingInput'     => !empty($pendingInterrupts),

@@ -6,11 +6,11 @@
 /**
  * Thin HTTP client around the AG-UI / FoResTCHAT backend.
  *
- * Exposes blocking helpers for the JSON endpoints (/reflect/defaults,
- * /reflect/configure, /health) and a streaming helper for /reflect that
- * forwards every received SSE chunk to a callback. The streaming method
- * intentionally does no AG-UI parsing - the caller decides how to
- * accumulate / persist messages.
+ * Exposes blocking helpers for the JSON endpoints (/reflect/configure,
+ * /health) and a streaming helper for /reflect that forwards every
+ * received SSE chunk to a callback. The streaming method intentionally
+ * does no AG-UI parsing - the caller decides how to accumulate /
+ * persist messages.
  */
 class AgenticChatBackendClient
 {
@@ -34,17 +34,6 @@ class AgenticChatBackendClient
     public function getBaseUrl()
     {
         return $this->baseUrl;
-    }
-
-    /**
-     * GET /reflect/defaults.
-     *
-     * @param string $path Endpoint path (default '/reflect/defaults').
-     * @return array{ok:bool, status:int, data?:array, error?:string}
-     */
-    public function getDefaults($path = AGENTIC_CHAT_DEFAULT_DEFAULTS_PATH)
-    {
-        return $this->jsonRequest('GET', $path);
     }
 
     /**

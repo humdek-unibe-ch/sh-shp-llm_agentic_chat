@@ -85,7 +85,7 @@ class AgenticChatService
      * Load all plugin-level configuration values from the admin config page.
      *
      * @return array{backend_url:string, reflect_path:string, configure_path:string,
-     *               defaults_path:string, health_path:string, timeout:int,
+     *               health_path:string, timeout:int,
      *               default_module:string, personas:array}
      */
     public function getGlobalConfig()
@@ -117,7 +117,6 @@ class AgenticChatService
             'backend_url' => rtrim((string) ($fields['agentic_chat_backend_url'] ?? AGENTIC_CHAT_DEFAULT_BACKEND_URL), '/'),
             'reflect_path' => (string) ($fields['agentic_chat_reflect_path'] ?? AGENTIC_CHAT_DEFAULT_REFLECT_PATH),
             'configure_path' => (string) ($fields['agentic_chat_configure_path'] ?? AGENTIC_CHAT_DEFAULT_CONFIGURE_PATH),
-            'defaults_path' => (string) ($fields['agentic_chat_defaults_path'] ?? AGENTIC_CHAT_DEFAULT_DEFAULTS_PATH),
             'health_path' => (string) ($fields['agentic_chat_health_path'] ?? AGENTIC_CHAT_DEFAULT_HEALTH_PATH),
             'timeout' => (int) ($fields['agentic_chat_timeout'] ?? AGENTIC_CHAT_DEFAULT_TIMEOUT),
             'default_module' => (string) ($fields['agentic_chat_default_module'] ?? ''),
@@ -166,39 +165,52 @@ class AgenticChatService
     /**
      * Configure a thread on the backend.
      *
-     * The caller resolves which personas to use (via the section's
-     * selection + global fallback) and passes the slot_type -> persona
-     * map. The service translates that into the backend's
-     * `/reflect/configure` payload (mediator excluded — it is fixed in
-     * the Python backend).
+     * The caller resolves the ORDERED persona list a section uses (via
+     * the section's selection + global fallback) plus the mediator
+     * toggle. The service translates that into the backend's
+     * `/reflect/configure` payload (`{ thread_id, module_content,
+     * personas: [{name, description}], use_group_chat_mediator }`) and
+     * persists the participant map so attribution survives a refresh.
      *
-     * @param array                 $thread        Thread row from getOrCreateThread().
-     * @param array<string, array>  $slotPersonas  slot_type -> persona object
-     *                                             (from `AgenticChatPersonaService::resolveSlotPersonas()`
-     *                                             / `AgenticChatModel::getResolvedSlotPersonas()`).
+     * NB: the backend's `set_thread_config()` clears the cached
+     * workflow, so callers must NOT reconfigure an active thread on
+     * every run (that would wipe pending interrupts). Configure is
+     * called once at thread start; resets create a brand-new thread.
+     *
+     * @param array                            $thread          Thread row from getOrCreateThread().
+     * @param array<int, array<string, mixed>> $orderedPersonas Ordered persona list
+     *                                          (from `AgenticChatModel::getResolvedPersonas()`).
+     * @param bool                             $useMediator     Whether to enable the group-chat mediator.
+     * @param string|null                      $moduleContent   Resolved module text (section override
+     *                                          or global default). When null the global default module
+     *                                          from the admin page is used.
      * @return array{ok:bool, status:int, data?:array, error?:string}
      */
-    public function configureThread(array $thread, array $slotPersonas)
+    public function configureThread(array $thread, array $orderedPersonas, $useMediator = true, $moduleContent = null)
     {
         $cfg = $this->getGlobalConfig();
-        $module = (string) $cfg['default_module'];
+        $module = $moduleContent !== null && trim((string) $moduleContent) !== ''
+            ? (string) $moduleContent
+            : (string) $cfg['default_module'];
 
         $payload = $this->personaService->buildConfigurePayload(
-            $slotPersonas,
+            $orderedPersonas,
             $module,
-            (string) $thread['agui_thread_id']
+            (string) $thread['agui_thread_id'],
+            (bool) $useMediator
         );
 
         $client = $this->getBackendClient();
 
-        // Persist a backend-slot -> persona-key map for the threads
-        // viewer and the event normaliser (mediator key is fixed).
-        $slotKeyMap = $this->personaService->buildBackendSlotKeyMap($slotPersonas);
+        // Persist a backend-slot -> persona-key participant map for the
+        // threads viewer and the event normaliser.
+        $participantMap = $this->personaService->buildParticipantMap($orderedPersonas);
 
         $this->threadService->updateThread($thread['id'], [
             'status' => AGENTIC_CHAT_STATUS_CONFIGURING,
-            'persona_slot_map' => json_encode($slotKeyMap),
+            'persona_slot_map' => json_encode($participantMap),
             'module_content' => $module,
+            'use_group_chat_mediator' => $useMediator ? 1 : 0,
         ]);
 
         $result = $client->configureThread($payload, $cfg['configure_path']);
@@ -276,9 +288,12 @@ class AgenticChatService
             'last_run_id' => $runId,
         ]);
 
+        // AG-UI RunAgentInput is camelCase on the wire (threadId / runId /
+        // forwardedProps); see the backend README run example. The
+        // /reflect/configure body is the only snake_case payload.
         $payload = [
-            'thread_id' => (string) $thread['agui_thread_id'],
-            'run_id' => $runId,
+            'threadId' => (string) $thread['agui_thread_id'],
+            'runId' => $runId,
             'state' => new stdClass(),
             'tools' => [],
             'context' => [],
@@ -424,6 +439,7 @@ class AgenticChatService
                         $transcriptLogger->logMessage(
                             $threadRef,
                             [
+                                'sourceExecutorId' => $buffer['sourceExecutorId'],
                                 'authorName'       => $buffer['authorName'],
                                 'authorSlot'       => $buffer['authorSlot'],
                                 'authorPersonaKey' => $buffer['authorPersonaKey'],
@@ -459,6 +475,7 @@ class AgenticChatService
                                 $transcriptLogger->logInterrupt(
                                     $threadRef,
                                     [
+                                        'sourceExecutorId' => $interrupt['sourceExecutorId'] ?? null,
                                         'authorName'       => $interrupt['authorName'] ?? null,
                                         'authorSlot'       => $interrupt['authorSlot'] ?? null,
                                         'authorPersonaKey' => $interrupt['authorPersonaKey'] ?? null,

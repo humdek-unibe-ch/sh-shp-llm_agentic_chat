@@ -4,36 +4,35 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 /**
- * Persona JSON validation, normalisation, and slot resolution.
+ * Persona JSON validation, normalisation, and ordered resolution.
  *
- * Personas are authored as variants for the three teacher slots
- * supported by the Python reflection backend. Every persona is a JSON
+ * Personas are an ORDERED, flexible library. Every persona is a JSON
  * object with the following shape:
  *
  *   {
- *     "key":          string,   // stable internal slug (auto-derived from name)
- *     "name":         string,   // display name shown in the chat UI
- *     "slot_type":    string,   // one of AGENTIC_CHAT_PERSONA_SLOT_TYPES
- *     "instructions": string,   // system-prompt sent to /reflect/configure
- *     "color":        string,   // CSS hex color used for the avatar bubble
- *     "avatar":       string,   // emoji / short label / image URL / asset path
- *     "enabled":      boolean   // exclude from selection + fallback when false
+ *     "key":         string,   // stable internal slug (auto-derived from name)
+ *     "name":        string,   // display name + backend persona name
+ *     "description": string,   // system-prompt sent to /reflect/configure
+ *     "color":       string,   // CSS hex color used for the avatar bubble
+ *     "avatar":      string,   // emoji / short label / image URL / asset path
+ *     "enabled":     boolean   // exclude from selection + fallback when false
  *   }
  *
  * Notes on what is intentionally NOT here:
- *   - `role` (mediator/teacher/expert/supporter/other) — removed in
- *     v1.1.0. The backend only supports three teacher slots plus a
- *     fixed mediator, so generic roles cannot map to anything.
- *   - `personality` summary — removed; the first sentence of
- *     `instructions` already serves as a preview in the UI.
- *   - Mediator entries — the mediator is hard-coded in the backend and
- *     in the plugin (see `AGENTIC_CHAT_MEDIATOR_PERSONA`). It must not
- *     be authored as a persona variant.
+ *   - `slot_type` (foundational/inclusive/inquiry) — removed. The
+ *     backend takes an ordered persona list, not fixed teacher slots,
+ *     so personas are no longer pinned to a slot.
+ *   - `role` / `personality` summary — never reintroduced; the first
+ *     sentence of `description` serves as a preview in the UI.
+ *   - Mediator entries — the group-chat mediator is built by the
+ *     backend (toggled per section). It must not be authored as a
+ *     persona variant.
  *
- * Sections choose a subset of personas through the
- * `agentic_chat_personas_to_use` field. The resolver enforces
- * "at most one persona per slot type" and falls back to the first
- * enabled global persona for any slot type the section did not pick.
+ * Sections choose + order a subset of personas through the
+ * `agentic_chat_personas_to_use` field. `resolvePersonas()` returns
+ * the ordered list actually sent to the backend; `buildParticipantMap()`
+ * binds each positional backend slot (`persona_1`, `persona_2`, …) to
+ * the persona key that occupies it.
  */
 class AgenticChatPersonaService
 {
@@ -115,7 +114,11 @@ class AgenticChatPersonaService
 
     /**
      * Validate a single persona object. Returns null on hard failure
-     * (missing/unusable name or unknown slot type).
+     * (missing/unusable name).
+     *
+     * Accepts `description` as the canonical prompt field, falling back
+     * to the legacy `instructions` key so in-progress dev data is not
+     * lost on first save.
      *
      * @param array $persona
      * @return array|null
@@ -128,9 +131,8 @@ class AgenticChatPersonaService
         }
 
         // Key is auto-derived from name when missing or invalid. Admins
-        // do not edit the key directly in v1.1.0+ — the editor hides
-        // the field — but we still honour user-supplied values for
-        // backwards-compatible imports.
+        // do not edit the key directly — the editor hides the field —
+        // but we still honour user-supplied values for imports.
         $key = isset($persona['key']) ? $this->slugify((string) $persona['key']) : '';
         if ($key === '') {
             $key = $this->slugify($name);
@@ -139,22 +141,20 @@ class AgenticChatPersonaService
             return null;
         }
 
-        $slotType = isset($persona['slot_type']) ? (string) $persona['slot_type'] : '';
-        if (!in_array($slotType, AGENTIC_CHAT_PERSONA_SLOT_TYPES, true)) {
-            // Default new/legacy rows to the first slot type so the
-            // editor can recover from a malformed import without
-            // dropping the row entirely.
-            $slotType = AGENTIC_CHAT_SLOT_TYPE_FOUNDATIONAL;
+        $description = '';
+        if (isset($persona['description'])) {
+            $description = (string) $persona['description'];
+        } elseif (isset($persona['instructions'])) {
+            $description = (string) $persona['instructions'];
         }
 
         return [
-            'key'          => $key,
-            'name'         => $name,
-            'slot_type'    => $slotType,
-            'instructions' => isset($persona['instructions']) ? (string) $persona['instructions'] : '',
-            'color'        => isset($persona['color']) ? $this->normaliseColor((string) $persona['color']) : '',
-            'avatar'       => isset($persona['avatar']) ? trim((string) $persona['avatar']) : '',
-            'enabled'      => isset($persona['enabled']) ? (bool) $persona['enabled'] : true,
+            'key'         => $key,
+            'name'        => $name,
+            'description' => $description,
+            'color'       => isset($persona['color']) ? $this->normaliseColor((string) $persona['color']) : '',
+            'avatar'      => isset($persona['avatar']) ? trim((string) $persona['avatar']) : '',
+            'enabled'     => isset($persona['enabled']) ? (bool) $persona['enabled'] : true,
         ];
     }
 
@@ -179,80 +179,59 @@ class AgenticChatPersonaService
     }
 
     /**
-     * Resolve teacher slot types to persona objects.
+     * Resolve the ordered list of personas a section will actually use.
      *
-     * For each slot type in AGENTIC_CHAT_PERSONA_SLOT_TYPES:
-     *   1. If the section selected an enabled persona of that slot
-     *      type (in `$selectedKeys`), use it. When the section
-     *      selected MORE than one persona for the same slot type the
-     *      first one in selection order wins.
-     *   2. Otherwise fall back to the first enabled persona of that
-     *      slot type in the global library (selection order).
-     *   3. When neither is found the slot stays unassigned and the
-     *      backend will keep its built-in default.
+     *   1. If the section curated a set of persona keys
+     *      (`$selectedKeys`), keep them in selection order, dropping any
+     *      that are unknown, disabled, duplicated, or the reserved
+     *      mediator key.
+     *   2. Otherwise fall back to every enabled persona in the global
+     *      library, in library order.
      *
-     * @param array<int, array<string, mixed>> $personas     Global library.
-     * @param array<int, string>               $selectedKeys Section's curated persona keys.
-     * @return array<string, array<string, mixed>> slot_type -> persona
+     * The mediator key is reserved by the backend's group-chat mediator
+     * agent and is never returned as a persona.
+     *
+     * @param array<int, array<string, mixed>> $personas     Global library (ordered).
+     * @param array<int, string>               $selectedKeys Section's curated persona keys (ordered).
+     * @return array<int, array<string, mixed>> Ordered persona list.
      */
-    public function resolveSlotPersonas(array $personas, array $selectedKeys = [])
+    public function resolvePersonas(array $personas, array $selectedKeys = [])
     {
-        // The mediator key is reserved by the backend's hard-coded
-        // mediator agent and must NEVER be assigned to a teacher slot.
-        // Personas authored with key === AGENTIC_CHAT_MEDIATOR_KEY would
-        // otherwise steal the foundational slot, displacing a real
-        // teacher and leaving persona_1 with mediator-like instructions
-        // (which makes the corresponding teacher agent defer indefinitely
-        // and produce a chat where only the mediator ever speaks).
         $byKey = [];
         foreach ($personas as $persona) {
-            if (!isset($persona['key'])) {
-                continue;
-            }
-            if ($persona['key'] === AGENTIC_CHAT_MEDIATOR_KEY) {
+            if (!isset($persona['key']) || $persona['key'] === AGENTIC_CHAT_MEDIATOR_KEY) {
                 continue;
             }
             $byKey[$persona['key']] = $persona;
         }
 
-        /** @var array<string, array> $resolved */
         $resolved = [];
+        $seen = [];
 
-        // Pass 1: section overrides (in selection order, first-wins per slot).
-        foreach ($selectedKeys as $key) {
-            if ($key === AGENTIC_CHAT_MEDIATOR_KEY) {
-                continue;
+        if (!empty($selectedKeys)) {
+            foreach ($selectedKeys as $key) {
+                $key = (string) $key;
+                if ($key === '' || $key === AGENTIC_CHAT_MEDIATOR_KEY || isset($seen[$key])) {
+                    continue;
+                }
+                $persona = $byKey[$key] ?? null;
+                if (!$persona || empty($persona['enabled'])) {
+                    continue;
+                }
+                $seen[$key] = true;
+                $resolved[] = $persona;
             }
-            $persona = $byKey[$key] ?? null;
-            if (!$persona || empty($persona['enabled'])) {
-                continue;
-            }
-            $slotType = (string) ($persona['slot_type'] ?? '');
-            if (!in_array($slotType, AGENTIC_CHAT_PERSONA_SLOT_TYPES, true)) {
-                continue;
-            }
-            if (!isset($resolved[$slotType])) {
-                $resolved[$slotType] = $persona;
-            }
-        }
-
-        // Pass 2: fallback to first enabled global persona per slot type
-        // (skipping the reserved mediator key).
-        foreach (AGENTIC_CHAT_PERSONA_SLOT_TYPES as $slotType) {
-            if (isset($resolved[$slotType])) {
-                continue;
-            }
+        } else {
             foreach ($personas as $persona) {
+                $key = (string) ($persona['key'] ?? '');
+                if ($key === '' || $key === AGENTIC_CHAT_MEDIATOR_KEY || isset($seen[$key])) {
+                    continue;
+                }
                 if (empty($persona['enabled'])) {
                     continue;
                 }
-                if (($persona['key'] ?? null) === AGENTIC_CHAT_MEDIATOR_KEY) {
-                    continue;
-                }
-                if (($persona['slot_type'] ?? null) === $slotType) {
-                    $resolved[$slotType] = $persona;
-                    break;
-                }
+                $seen[$key] = true;
+                $resolved[] = $persona;
             }
         }
 
@@ -260,25 +239,26 @@ class AgenticChatPersonaService
     }
 
     /**
-     * Build the backend slot -> persona key map used to:
-     *   - tell the React chat which persona owns which backend slot
-     *   - feed `buildConfigurePayload()`
+     * Build the participant map binding each backend slot to a persona
+     * key, used to attribute streamed messages after a page refresh.
      *
-     * @param array<string, array> $slotPersonas slot_type -> persona (from resolveSlotPersonas).
+     * Shape: `{ mediator: "mediator", persona_1: "lea", persona_2: "anja" }`.
+     * The mediator entry is always included (harmless when the section
+     * disables the mediator — the chat simply never resolves it).
+     *
+     * @param array<int, array<string, mixed>> $orderedPersonas From resolvePersonas().
      * @return array<string, string> backend_slot -> persona key
      */
-    public function buildBackendSlotKeyMap(array $slotPersonas)
+    public function buildParticipantMap(array $orderedPersonas)
     {
-        $map = [];
-        // Mediator slot always points to the fixed mediator key so the
-        // chat surface can render avatar/name even though the backend
-        // does not accept a mediator prompt.
-        $map[AGENTIC_CHAT_SLOT_MEDIATOR] = AGENTIC_CHAT_MEDIATOR_KEY;
-
-        foreach (AGENTIC_CHAT_SLOT_TYPE_TO_BACKEND_SLOT as $slotType => $backendSlot) {
-            if (isset($slotPersonas[$slotType]['key'])) {
-                $map[$backendSlot] = (string) $slotPersonas[$slotType]['key'];
+        $map = [AGENTIC_CHAT_SLOT_MEDIATOR => AGENTIC_CHAT_MEDIATOR_KEY];
+        $index = 1;
+        foreach ($orderedPersonas as $persona) {
+            if (!isset($persona['key'])) {
+                continue;
             }
+            $map[agentic_chat_persona_slot($index)] = (string) $persona['key'];
+            $index++;
         }
         return $map;
     }
@@ -286,25 +266,24 @@ class AgenticChatPersonaService
     /**
      * Build the body sent to the backend's /reflect/configure endpoint.
      *
-     * Backend contract (see FoResTCHAT `ReflectionConfigureRequest`):
-     *   - `thread_id`                 (required, non-empty)
-     *   - `module_content`            (required, non-empty)
-     *   - `persona_<N>_name`          (required, non-empty) for N in 1..3
-     *   - `persona_<N>_instructions`  (required string; may be empty)
+     * Backend contract (see `ReflectionConfigureRequest`):
+     *   {
+     *     "thread_id":      string (required, non-empty),
+     *     "module_content": string (required, non-empty),
+     *     "personas": [ { "name": string, "description": string }, ... ] (>= 1),
+     *     "use_group_chat_mediator": bool (default true)
+     *   }
      *
-     * The plugin maps each authored slot type to a positional persona
-     * slot (`foundational -> persona_1`, …). Slots without an assigned
-     * persona fall back to the hard-coded labels in
-     * `AGENTIC_CHAT_SLOT_DEFAULTS` so the backend never sees an empty
-     * `persona_<N>_name` (which would 422). The mediator is not
-     * configurable on the backend and is therefore never included.
+     * When the resolved persona list is empty a neutral fallback persona
+     * is emitted so the backend's `min_length: 1` constraint is met.
      *
-     * @param array<string, array> $slotPersonas  slot_type -> persona (from resolveSlotPersonas).
-     * @param string               $moduleContent Module text.
-     * @param string               $threadId      AG-UI thread id.
+     * @param array<int, array<string, mixed>> $orderedPersonas From resolvePersonas().
+     * @param string                           $moduleContent   Module text.
+     * @param string                           $threadId        AG-UI thread id.
+     * @param bool                             $useMediator     Whether to enable the mediator.
      * @return array Payload for POST /reflect/configure.
      */
-    public function buildConfigurePayload(array $slotPersonas, $moduleContent, $threadId)
+    public function buildConfigurePayload(array $orderedPersonas, $moduleContent, $threadId, $useMediator = true)
     {
         $module = trim((string) $moduleContent);
         if ($module === '') {
@@ -314,31 +293,31 @@ class AgenticChatPersonaService
             $module = 'Reflection module: discuss what you have learned.';
         }
 
-        $payload = [
-            'thread_id'      => (string) $threadId,
-            'module_content' => $module,
-        ];
-
-        foreach (AGENTIC_CHAT_SLOT_TYPE_TO_BACKEND_SLOT as $slotType => $backendSlot) {
-            $persona = $slotPersonas[$slotType] ?? null;
-            $defaults = AGENTIC_CHAT_SLOT_DEFAULTS[$backendSlot] ?? [
-                'name'         => ucfirst(str_replace('_', ' ', $backendSlot)),
-                'instructions' => '',
+        $personas = [];
+        foreach ($orderedPersonas as $persona) {
+            $name = trim((string) ($persona['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $personas[] = [
+                'name'        => $name,
+                'description' => (string) ($persona['description'] ?? ''),
             ];
-
-            $name = $persona && trim((string) ($persona['name'] ?? '')) !== ''
-                ? (string) $persona['name']
-                : $defaults['name'];
-
-            $instructions = $persona && trim((string) ($persona['instructions'] ?? '')) !== ''
-                ? (string) $persona['instructions']
-                : $defaults['instructions'];
-
-            $payload[$backendSlot . '_name'] = $name;
-            $payload[$backendSlot . '_instructions'] = $instructions;
         }
 
-        return $payload;
+        if (empty($personas)) {
+            $personas[] = [
+                'name'        => (string) AGENTIC_CHAT_DEFAULT_PERSONA['name'],
+                'description' => (string) AGENTIC_CHAT_DEFAULT_PERSONA['description'],
+            ];
+        }
+
+        return [
+            'thread_id'               => (string) $threadId,
+            'module_content'          => $module,
+            'personas'                => $personas,
+            'use_group_chat_mediator' => (bool) $useMediator,
+        ];
     }
 
     /**

@@ -237,9 +237,10 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
         $cfg = $this->getAgenticService()->getGlobalConfig();
         $personaService = $this->getAgenticService()->getPersonaService();
 
-        // Prefer the per-thread snapshot of the slot map so the configure
-        // payload reflects what was actually sent at thread-init time.
-        $slotMap = is_array($thread['persona_slot_map_json'] ?? null)
+        // Prefer the per-thread snapshot of the participant map so the
+        // configure payload reflects what was actually sent at
+        // thread-init time (slot -> persona key, e.g. persona_1 -> lea).
+        $participantMap = is_array($thread['persona_slot_map_json'] ?? null)
             ? $thread['persona_slot_map_json']
             : [];
 
@@ -248,6 +249,10 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
             ?? $cfg['default_module']
             ?? '');
 
+        // The thread froze its mediator choice at configure time.
+        $useMediator = !isset($thread['use_group_chat_mediator'])
+            || (int) $thread['use_group_chat_mediator'] === 1;
+
         $threadId = (string) ($thread['agui_thread_id'] ?? '');
         $backendUrl = rtrim((string) ($thread['backend_url']
             ?? $cfg['backend_url']
@@ -255,11 +260,20 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
         $configurePath = (string) $cfg['configure_path'];
         $reflectPath = (string) $cfg['reflect_path'];
 
+        // Rebuild the ordered persona list from the participant map +
+        // the global library, so the configure body matches the backend
+        // contract ({ thread_id, module_content, personas:[{name,
+        // description}], use_group_chat_mediator }).
+        $orderedPersonas = $this->orderedPersonasFromParticipantMap(
+            $participantMap,
+            is_array($cfg['personas'] ?? null) ? $cfg['personas'] : []
+        );
+
         $configureBody = $personaService->buildConfigurePayload(
-            $cfg['personas'],
-            $slotMap,
+            $orderedPersonas,
             $moduleContent,
-            $threadId
+            $threadId,
+            $useMediator
         );
 
         // Most recent USER message is the natural "send this again" example
@@ -276,10 +290,11 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
             $lastUser = (string) ($messages[0]['content'] ?? '');
         }
 
+        // AG-UI RunAgentInput is camelCase on the wire (threadId / runId).
         $runIdPlaceholder = '<generate-uuid-here>';
         $runBodyTemplate = [
-            'thread_id' => $threadId,
-            'run_id' => $runIdPlaceholder,
+            'threadId' => $threadId,
+            'runId' => $runIdPlaceholder,
             'state' => new stdClass(),
             'tools' => [],
             'context' => [],
@@ -314,6 +329,53 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
                 'run_id_placeholder' => $runIdPlaceholder,
             ],
         ];
+    }
+
+    /**
+     * Rebuild the ordered persona list a thread was configured with from
+     * its persisted participant map (slot -> persona key) and the global
+     * persona library. Slots are visited in positional order
+     * (persona_1, persona_2, …); the mediator slot is skipped.
+     *
+     * Unknown keys (e.g. the persona was deleted from the library after
+     * the thread was configured) degrade to a minimal `{name}` descriptor
+     * so the playground configure body still resembles what was sent.
+     *
+     * @param array<string,string>            $participantMap slot -> persona key.
+     * @param array<int,array<string,mixed>>  $globalPersonas Global library.
+     * @return array<int,array<string,mixed>> Ordered persona objects.
+     */
+    private function orderedPersonasFromParticipantMap(array $participantMap, array $globalPersonas)
+    {
+        $byKey = [];
+        foreach ($globalPersonas as $persona) {
+            if (isset($persona['key'])) {
+                $byKey[(string) $persona['key']] = $persona;
+            }
+        }
+
+        // Collect persona_<N> slots and sort by N so the order matches
+        // what was sent to /reflect/configure.
+        $slots = [];
+        foreach ($participantMap as $slot => $key) {
+            if (preg_match('/^persona_(\d+)$/', (string) $slot, $m)) {
+                $slots[(int) $m[1]] = (string) $key;
+            }
+        }
+        ksort($slots);
+
+        $ordered = [];
+        foreach ($slots as $key) {
+            if ($key === '' || $key === AGENTIC_CHAT_MEDIATOR_KEY) {
+                continue;
+            }
+            if (isset($byKey[$key])) {
+                $ordered[] = $byKey[$key];
+            } else {
+                $ordered[] = ['key' => $key, 'name' => $key, 'description' => ''];
+            }
+        }
+        return $ordered;
     }
 
     /**

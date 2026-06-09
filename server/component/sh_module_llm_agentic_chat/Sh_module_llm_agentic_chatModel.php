@@ -98,9 +98,6 @@ class Sh_module_llm_agentic_chatModel extends BaseModel
                     $this->buildField('agentic_chat_configure_path', $fields, 'text',
                         'Configure Endpoint',
                         'Path of the per-thread configuration endpoint (POST).'),
-                    $this->buildField('agentic_chat_defaults_path', $fields, 'text',
-                        'Defaults Endpoint',
-                        'Endpoint that returns default module text and persona templates (GET).'),
                     $this->buildField('agentic_chat_health_path', $fields, 'text',
                         'Health Endpoint',
                         'Liveness probe endpoint (GET).'),
@@ -124,12 +121,9 @@ class Sh_module_llm_agentic_chatModel extends BaseModel
                         'name' => 'agentic_chat_personas',
                         'type' => 'agentic-personas',
                         'label' => 'Persona Library',
-                        'help' => 'Global library of teacher persona variants. Each persona is tagged with a slot type (foundational / inclusive / inquiry) and is sent to the corresponding backend slot. The mediator persona is fixed in the backend and is not editable here.',
+                        'help' => 'Ordered, flexible library of teacher personas. Each persona has a name and a description (the system prompt sent to the backend as the persona description). Sections pick + order which personas take part and whether to use the group-chat mediator. The mediator is built by the backend and is not authored here.',
                         'value' => $this->personaService->encode($personas),
                         'parsed' => $personas,
-                        'slotTypeOptions' => $this->getSlotTypeOptions(),
-                        'backendSlots' => AGENTIC_CHAT_BACKEND_SLOTS,
-                        'slotTypes' => AGENTIC_CHAT_PERSONA_SLOT_TYPES,
                         'mediator' => AGENTIC_CHAT_MEDIATOR_PERSONA,
                     ],
                 ],
@@ -161,30 +155,6 @@ class Sh_module_llm_agentic_chatModel extends BaseModel
             $field['options'] = $options;
         }
         return $field;
-    }
-
-    /**
-     * Slot-type options shown in the persona editor dropdown. Driven by
-     * the `AGENTIC_CHAT_PERSONA_SLOT_TYPES` constant so backend, plugin
-     * and React UI stay in lock-step.
-     *
-     * @return array<int, array{value:string,label:string}>
-     */
-    private function getSlotTypeOptions()
-    {
-        $labels = [
-            AGENTIC_CHAT_SLOT_TYPE_FOUNDATIONAL => 'Foundational',
-            AGENTIC_CHAT_SLOT_TYPE_INCLUSIVE    => 'Inclusive',
-            AGENTIC_CHAT_SLOT_TYPE_INQUIRY      => 'Inquiry',
-        ];
-        $options = [];
-        foreach (AGENTIC_CHAT_PERSONA_SLOT_TYPES as $slotType) {
-            $options[] = [
-                'value' => $slotType,
-                'label' => $labels[$slotType] ?? ucfirst($slotType),
-            ];
-        }
-        return $options;
     }
 
     /**
@@ -281,7 +251,6 @@ class Sh_module_llm_agentic_chatModel extends BaseModel
                 'backend_url' => $this->getSetting('agentic_chat_backend_url', AGENTIC_CHAT_DEFAULT_BACKEND_URL),
                 'reflect_path' => $this->getSetting('agentic_chat_reflect_path', AGENTIC_CHAT_DEFAULT_REFLECT_PATH),
                 'configure_path' => $this->getSetting('agentic_chat_configure_path', AGENTIC_CHAT_DEFAULT_CONFIGURE_PATH),
-                'defaults_path' => $this->getSetting('agentic_chat_defaults_path', AGENTIC_CHAT_DEFAULT_DEFAULTS_PATH),
                 'health_path' => $this->getSetting('agentic_chat_health_path', AGENTIC_CHAT_DEFAULT_HEALTH_PATH),
                 'timeout' => (int) $this->getSetting('agentic_chat_timeout', (string) AGENTIC_CHAT_DEFAULT_TIMEOUT),
                 'default_module' => $this->getSetting('agentic_chat_default_module', ''),

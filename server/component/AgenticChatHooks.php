@@ -309,9 +309,6 @@ class AgenticChatHooks extends BaseHooks
                 continue;
             }
             $label = $name;
-            if (!empty($persona['slot_type'])) {
-                $label .= ' (' . $this->prettySlotTypeLabel((string) $persona['slot_type']) . ')';
-            }
             if (empty($persona['enabled'])) {
                 $label .= ' — disabled';
             }
@@ -361,18 +358,6 @@ class AgenticChatHooks extends BaseHooks
             array_map('trim', explode(',', $raw)),
             static function ($v) { return $v !== ''; }
         )));
-    }
-
-    /**
-     * Convert a slot_type identifier (`foundational` / `inclusive` /
-     * `inquiry`) into a friendly title-cased label.
-     *
-     * @param string $slotType Slot type identifier.
-     * @return string
-     */
-    private function prettySlotTypeLabel($slotType)
-    {
-        return ucwords(str_replace('_', ' ', (string) $slotType));
     }
 
     /**
