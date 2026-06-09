@@ -376,4 +376,19 @@ class AgenticChatHooks extends BaseHooks
             return null;
         }
     }
+
+    /* =========================================================================
+     * PLUGIN DB VERSION
+     * ========================================================================= */
+
+    /**
+     * Get the plugin database version.
+     *
+     * @param string $plugin_name Plugin name, defaults to 'llm_agentic_chat'.
+     * @return string|null Plugin version or null.
+     */
+    public function get_plugin_db_version($plugin_name = 'llm_agentic_chat')
+    {
+        return parent::get_plugin_db_version($plugin_name);
+    }
 }

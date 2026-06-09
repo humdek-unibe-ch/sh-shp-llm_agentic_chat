@@ -4,6 +4,11 @@ All notable changes to the **sh-shp-llm_agentic_chat** plugin are documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-06-09
+
+### Fixed
+- **Plugin database version now properly loaded.** Added `get_plugin_db_version()` method to `AgenticChatHooks` matching the pattern used in `sh-shp-llm` plugin's `LlmHooks`, ensuring the plugin's database version is correctly retrieved by the CMS.
+
 ## [1.0.0] - 2026-06-09
 
 
