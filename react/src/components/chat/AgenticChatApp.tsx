@@ -249,6 +249,7 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
       messages={messagesHook.messages}
       inFlight={messagesHook.inFlight}
       activePersonaKey={messagesHook.currentPersonaKey}
+      handoffTarget={messagesHook.handoffTarget}
       status={runStatus.status}
       isStreaming={stream.isStreaming}
       caseClosed={runStatus.caseClosed || (thread.thread?.isCompleted ?? false)}

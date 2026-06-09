@@ -23,7 +23,6 @@ const FALLBACK_BACKEND: BackendSettings = {
   backend_url: 'https://tpf-test.humdek.unibe.ch/forestBackend',
   reflect_path: '/reflect',
   configure_path: '/reflect/configure',
-  defaults_path: '/reflect/defaults',
   health_path: '/health',
   timeout: 120,
   default_module: '',
@@ -169,12 +168,6 @@ export const AdminApp: React.FC<AdminAppProps> = ({ config }) => {
     return { ok: true, data: res.data?.data ?? res.data };
   };
 
-  const handleDefaults = async () => {
-    const res = await api.fetchDefaults();
-    if (!res.ok) return { ok: false, error: res.error };
-    return { ok: true, data: res.data?.data ?? res.data };
-  };
-
   /* ---- render ------------------------------------------------------- */
 
   if (loading) {
@@ -226,7 +219,6 @@ export const AdminApp: React.FC<AdminAppProps> = ({ config }) => {
         value={backend}
         onChange={updateBackend}
         onTestHealth={handleHealth}
-        onFetchDefaults={handleDefaults}
       />
 
       <PersonaEditor

@@ -1,30 +1,24 @@
 /**
- * PersonaRow — inline edit form for a single persona variant.
+ * PersonaRow — inline edit form for a single persona.
  *
- * v1.1.0 simplified the fields shown to researchers down to what the
- * Python backend actually consumes:
+ * Personas are a flexible, ordered list. The fields shown to researchers
+ * map 1:1 onto what the backend consumes:
  *
- *   - name          (display name)
- *   - slot_type     (foundational / inclusive / inquiry)
- *   - avatar        (asset path or emoji)
- *   - color         (hex)
- *   - instructions  (system prompt for the slot)
- *   - enabled       (include in fallback / section selection)
+ *   - name         (display name, sent as the persona name)
+ *   - avatar       (asset path or emoji)
+ *   - color        (hex)
+ *   - description  (system prompt sent as the persona description)
+ *   - enabled      (include in section selection / fallback)
  *
  * The internal `key` field is auto-derived from the name and hidden
- * from the editor. `role` and `personality` were removed because the
- * backend does not support arbitrary roles and a separate personality
- * summary added maintenance cost without changing behaviour.
+ * from the editor. There are no fixed slot types: section order +
+ * selection decide which positional backend slot each persona feeds.
  *
  * @module components/admin/PersonaRow
  */
 import React from 'react';
-import type { Persona, PersonaSlotType } from '../../types';
+import type { Persona } from '../../types';
 import { isImageAvatar, resolveAvatarUrl } from '../../utils/avatar';
-import {
-  SLOT_TYPE_OPTIONS,
-  slotTypeToBackendSlot,
-} from '../../utils/persona-mapping';
 
 export interface PersonaRowProps {
   persona: Persona;
@@ -81,7 +75,7 @@ export const PersonaRow: React.FC<PersonaRowProps> = ({
       </div>
 
       <div className="form-row">
-        <div className="form-group col-md-6">
+        <div className="form-group col-md-9">
           <label className="small font-weight-bold" htmlFor={`persona-name-${index}`}>Display name</label>
           <input
             id={`persona-name-${index}`}
@@ -91,25 +85,11 @@ export const PersonaRow: React.FC<PersonaRowProps> = ({
             onChange={(e) => onChange({ name: e.target.value })}
             placeholder="e.g. Lea"
           />
-        </div>
-        <div className="form-group col-md-4">
-          <label className="small font-weight-bold" htmlFor={`persona-slot-type-${index}`}>Slot type</label>
-          <select
-            id={`persona-slot-type-${index}`}
-            className="form-control form-control-sm"
-            value={persona.slot_type || 'foundational'}
-            onChange={(e) => onChange({ slot_type: e.target.value as PersonaSlotType })}
-          >
-            {SLOT_TYPE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
           <small className="form-text text-muted">
-            Maps onto the backend's positional teacher slot:{' '}
-            <code>{slotTypeToBackendSlot(persona.slot_type)}</code>.
+            Sent to the backend as the persona <code>name</code>.
           </small>
         </div>
-        <div className="form-group col-md-2">
+        <div className="form-group col-md-3">
           <label className="small font-weight-bold" htmlFor={`persona-color-${index}`}>Color</label>
           <input
             id={`persona-color-${index}`}
@@ -151,19 +131,18 @@ export const PersonaRow: React.FC<PersonaRowProps> = ({
       </div>
 
       <div className="form-group">
-        <label className="small font-weight-bold" htmlFor={`persona-instructions-${index}`}>Instructions</label>
+        <label className="small font-weight-bold" htmlFor={`persona-description-${index}`}>Description</label>
         <textarea
-          id={`persona-instructions-${index}`}
+          id={`persona-description-${index}`}
           className="form-control form-control-sm"
           rows={6}
-          value={persona.instructions}
-          onChange={(e) => onChange({ instructions: e.target.value })}
-          placeholder="System prompt sent to the backend for this persona variant. Describe role and teaching style only — the backend appends the module context automatically."
+          value={persona.description}
+          onChange={(e) => onChange({ description: e.target.value })}
+          placeholder="System prompt sent to the backend for this persona. Describe role and teaching style only — the backend supplies the module context separately."
         />
         <small className="form-text text-muted">
-          Sent as <code>{slotTypeToBackendSlot(persona.slot_type)}_instructions</code> on every{' '}
-          <code>/reflect/configure</code> call. The persona display name is sent as{' '}
-          <code>{slotTypeToBackendSlot(persona.slot_type)}_name</code>.
+          Sent as the persona <code>description</code> in the{' '}
+          <code>personas</code> array on every <code>/reflect/configure</code> call.
         </small>
       </div>
 

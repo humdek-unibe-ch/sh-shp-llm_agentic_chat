@@ -5,35 +5,21 @@
 /* ---------- Personas ----------------------------------------------------- */
 
 /**
- * Persona slot type — one of the three teacher slots supported by the
- * Python reflection backend. The mediator persona is fixed in the
- * backend and is therefore NOT a slot type.
- */
-export type PersonaSlotType = 'foundational' | 'inclusive' | 'inquiry';
-
-/** Ordered list of slot types used in editor dropdowns / strip rendering. */
-export const PERSONA_SLOT_TYPES: PersonaSlotType[] = ['foundational', 'inclusive', 'inquiry'];
-
-/**
- * Persona variant authored in the admin library.
+ * Persona authored in the admin library.
  *
- * Every persona is bound to exactly one teacher slot type and provides
- * the system prompt the backend uses for that slot. The mediator is
- * NOT modelled here — it is a fixed plugin/UI participant (see
- * `AgenticChatConfig.mediator`).
+ * Personas form an ordered, flexible list. Each provides a display name
+ * and a `description` (the system prompt sent to the backend as the
+ * persona's `description`). The mediator is NOT modelled here — it is a
+ * fixed plugin/UI participant toggled per section (see
+ * `AgenticChatConfig.mediator` / `useGroupChatMediator`).
  */
 export interface Persona {
   /** Stable internal slug (auto-derived from name, hidden in the editor). */
   key: string;
-  /** Display name shown in the UI. */
+  /** Display name shown in the UI + sent to the backend as the persona name. */
   name: string;
-  /**
-   * Backend slot this persona variant feeds. May be null for the fixed
-   * mediator descriptor which lives outside the slot-type model.
-   */
-  slot_type: PersonaSlotType | null;
-  /** System-prompt template. May contain {module_content} placeholders. */
-  instructions: string;
+  /** System prompt (role + style) sent to the backend as `description`. */
+  description: string;
   /** Hex color used for badges/avatars. */
   color?: string;
   /** Avatar asset URL/path, emoji, or short label. */
@@ -42,7 +28,10 @@ export interface Persona {
   enabled: boolean;
 }
 
-/** Map: backend-defined slot -> persona key. */
+/**
+ * Participant map: backend slot -> persona key.
+ * Slots are `mediator` and positional `persona_1`, `persona_2`, …
+ */
 export type PersonaSlotMap = Record<string, string | null>;
 
 /* ---------- Backend / config -------------------------------------------- */
@@ -80,19 +69,18 @@ export interface AgenticChatConfig {
   showPersonaStrip: boolean;
   showRunStatus: boolean;
   /**
-   * Resolved persona list for this section — the fixed mediator at
-   * index 0 followed by the teacher variants chosen for each slot
-   * type (selection -> fallback resolution happens server-side).
+   * Resolved, ordered persona list for this section — the mediator
+   * (when enabled) at index 0 followed by the personas chosen for this
+   * section (selection -> fallback resolution happens server-side).
    */
   personas: Persona[];
   /**
-   * Backend slot -> persona key mapping resolved on the PHP side from the
-   * section's curated persona list. Read-only on the client; the PHP
-   * controller rebuilds it on every `start_thread` to keep CMS state and
-   * backend state in sync.
+   * Participant map (backend slot -> persona key) resolved on the PHP
+   * side from the section's ordered persona list. Read-only on the
+   * client; persisted on the thread at configure time so attribution
+   * survives a refresh.
    */
   personaSlotMap: PersonaSlotMap;
-  backendSlots: string[];
   /**
    * Read-only descriptor for the fixed mediator persona. Mirrors the
    * `AGENTIC_CHAT_MEDIATOR_PERSONA` constant on the PHP side and is
@@ -100,8 +88,8 @@ export interface AgenticChatConfig {
    * even though it is not part of the editable persona library.
    */
   mediator: Persona;
-  /** Allowed teacher slot types (mirrors PERSONA_SLOT_TYPES). */
-  slotTypes: PersonaSlotType[];
+  /** Whether this section uses the backend's group-chat mediator. */
+  useGroupChatMediator: boolean;
   /** Whether the microphone button should be rendered in the input. */
   enableSpeechToText: boolean;
   /** Whisper model identifier sent with each transcription request. */
@@ -136,6 +124,8 @@ export interface ThreadInfo {
   isCompleted: boolean;
   lastError: string | null;
   personaSlotMap: PersonaSlotMap | Record<string, never>;
+  /** Whether this thread was configured with the group-chat mediator. */
+  useGroupChatMediator: boolean;
   moduleContent: string | null;
   /**
    * AG-UI interrupts persisted on the thread row.
@@ -377,7 +367,6 @@ export interface BackendSettings {
   backend_url: string;
   reflect_path: string;
   configure_path: string;
-  defaults_path: string;
   health_path: string;
   timeout: number;
   default_module: string;

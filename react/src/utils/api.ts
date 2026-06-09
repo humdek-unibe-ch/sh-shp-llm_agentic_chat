@@ -116,7 +116,6 @@ export interface AdminApi {
   getConfig(): Promise<ApiResult<{ ok: boolean; data: AdminInitialState }>>;
   saveBackend(settings: BackendSettings): Promise<ApiResult<{ ok: boolean }>>;
   savePersonas(personas: Persona[]): Promise<ApiResult<{ ok: boolean }>>;
-  fetchDefaults(): Promise<ApiResult<{ ok: boolean; data: Record<string, unknown> }>>;
   healthCheck(): Promise<ApiResult<{ ok: boolean; data: Record<string, unknown> }>>;
 }
 
@@ -140,7 +139,6 @@ export function createAdminApi(baseUrl: string, csrfToken: string): AdminApi {
         agentic_chat_backend_url: settings.backend_url,
         agentic_chat_reflect_path: settings.reflect_path,
         agentic_chat_configure_path: settings.configure_path,
-        agentic_chat_defaults_path: settings.defaults_path,
         agentic_chat_health_path: settings.health_path,
         agentic_chat_timeout: settings.timeout,
         agentic_chat_default_module: settings.default_module,
@@ -148,7 +146,6 @@ export function createAdminApi(baseUrl: string, csrfToken: string): AdminApi {
       return post('save_config', { fields });
     },
     savePersonas: (personas) => post('save_personas', { personas }),
-    fetchDefaults: () => request(url('fetch_defaults'), { method: 'GET' }),
     healthCheck: () => request(url('health_check'), { method: 'GET' }),
   };
 }

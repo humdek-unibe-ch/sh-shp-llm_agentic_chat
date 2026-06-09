@@ -35,8 +35,22 @@ import { RunStatusBadge } from './RunStatusBadge';
 import { ThreadActions } from './ThreadActions';
 import { DebugEventPanel } from './DebugEventPanel';
 import { InterruptPromptCard } from './InterruptPromptCard';
-import { indexPersonas } from '../../utils/persona-mapping';
+import { findPersonaByAuthor, indexPersonas } from '../../utils/persona-mapping';
 import { classifyChatError } from '../../utils/error-classify';
+
+/**
+ * Humanise a raw handoff target token (persona key / executor id) when
+ * it does not resolve to a known persona, e.g. "persona_2_teacher" →
+ * "Teacher 2", "ms_chen" → "Ms Chen".
+ */
+function humanizeHandoffTarget(raw: string | null): string | null {
+  if (!raw) return null;
+  const m = /^persona_(\d+)(?:_.*)?$/.exec(raw);
+  if (m) return `Teacher ${m[1]}`;
+  const cleaned = raw.replace(/[_-]+/g, ' ').trim();
+  if (!cleaned) return null;
+  return cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 /**
  * Inline error surface shown above the input when a run fails.
@@ -99,6 +113,8 @@ export interface ChatShellProps {
   messages: ChatMessage[];
   inFlight: InFlightMessage[];
   activePersonaKey: string | null;
+  /** Raw target of an in-flight handoff tool call, or null. */
+  handoffTarget: string | null;
   status: RunStatus;
   isStreaming: boolean;
   caseClosed: boolean;
@@ -131,6 +147,7 @@ export const ChatShell: React.FC<ChatShellProps> = ({
   messages,
   inFlight,
   activePersonaKey,
+  handoffTarget,
   status,
   isStreaming,
   caseClosed,
@@ -153,6 +170,16 @@ export const ChatShell: React.FC<ChatShellProps> = ({
 }) => {
   const inputDisabled = isStreaming || caseClosed || status === 'starting';
   const personasByKey = useMemo(() => indexPersonas(personas), [personas]);
+
+  // Resolve the persona currently streaming and the (optional) pending
+  // handoff target so the status badge + persona strip can show
+  // "X is typing…" vs "Handing off to Y" distinctly.
+  const activeSpeaker = activePersonaKey ? personasByKey[activePersonaKey] ?? null : null;
+  const handoffPersona = useMemo(
+    () => findPersonaByAuthor(personas, slotMap, handoffTarget),
+    [personas, slotMap, handoffTarget]
+  );
+  const handoffTargetName = handoffPersona?.name ?? humanizeHandoffTarget(handoffTarget);
   // Most recent assistant message text — used to suppress an
   // interrupt card body that just restates what the user has already
   // read in the message stream above the card.
@@ -187,6 +214,8 @@ export const ChatShell: React.FC<ChatShellProps> = ({
               status={status}
               isStreaming={isStreaming}
               caseClosed={caseClosed}
+              activeSpeakerName={activeSpeaker?.name ?? null}
+              handoffTargetName={handoffTargetName}
               labels={{
                 idle: labels.statusIdle,
                 running: labels.statusRunning,
@@ -221,6 +250,7 @@ export const ChatShell: React.FC<ChatShellProps> = ({
           personas={personas}
           slotMap={slotMap}
           activePersonaKey={activePersonaKey}
+          handoffTargetKey={handoffPersona?.key ?? null}
         />
       )}
 

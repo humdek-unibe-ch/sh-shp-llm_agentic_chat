@@ -1,6 +1,6 @@
 /**
  * PersonaStrip - small horizontal strip showing the active persona and
- * the other personas mapped to backend slots.
+ * the other personas mapped to participant-map slots.
  */
 import React, { useMemo } from 'react';
 import type { Persona, PersonaSlotMap } from '../../types';
@@ -8,28 +8,30 @@ import { indexPersonas } from '../../utils/persona-mapping';
 import { isImageAvatar, resolveAvatarUrl } from '../../utils/avatar';
 
 /**
- * Friendly labels for the positional backend slots used by the
- * FoResTCHAT reflection workflow. The keys here mirror the slot ids
- * the PHP side puts into `personaSlotMap` and the
- * `AGENTIC_CHAT_BACKEND_SLOTS` constant.
+ * Friendly label for a participant-map slot id. `mediator` is fixed;
+ * positional persona slots (`persona_1`, `persona_2`, …) become
+ * "Teacher 1", "Teacher 2", … so the strip works for any persona count.
  */
-const SLOT_LABELS: Record<string, string> = {
-  mediator: 'Mediator',
-  persona_1: 'Teacher 1',
-  persona_2: 'Teacher 2',
-  persona_3: 'Teacher 3',
-};
+function slotLabel(slot: string): string {
+  if (slot === 'mediator') return 'Mediator';
+  const m = /^persona_(\d+)$/.exec(slot);
+  if (m) return `Teacher ${m[1]}`;
+  return slot;
+}
 
 export interface PersonaStripProps {
   personas: Persona[];
   slotMap: PersonaSlotMap;
   activePersonaKey: string | null;
+  /** Persona key of a pending handoff target (shows a "handing off" hint). */
+  handoffTargetKey?: string | null;
 }
 
 export const PersonaStrip: React.FC<PersonaStripProps> = ({
   personas,
   slotMap,
   activePersonaKey,
+  handoffTargetKey,
 }) => {
   const byKey = useMemo(() => indexPersonas(personas), [personas]);
 
@@ -53,14 +55,24 @@ export const PersonaStrip: React.FC<PersonaStripProps> = ({
     <div className="agentic-personas" role="list">
       {slotted.map(({ slot, persona }) => {
         const isActive = activePersonaKey === persona.key;
+        const isHandoffTarget = !isActive && handoffTargetKey === persona.key;
         const avatarIsImage = isImageAvatar(persona.avatar);
-        const slotLabel = SLOT_LABELS[slot] ?? slot;
+        const label = slotLabel(slot);
+        const classes = [
+          'agentic-personas__item',
+          isActive ? 'is-active' : '',
+          isHandoffTarget ? 'is-handoff-target' : '',
+        ].filter(Boolean).join(' ');
         return (
           <div
             key={persona.key}
             role="listitem"
-            className={`agentic-personas__item${isActive ? ' is-active' : ''}`}
-            title={`${persona.name} — ${slotLabel}`}
+            className={classes}
+            title={
+              isHandoffTarget
+                ? `Handing off to ${persona.name} — ${label}`
+                : `${persona.name} — ${label}`
+            }
             style={{ borderColor: persona.color || undefined }}
           >
             <span
@@ -75,6 +87,11 @@ export const PersonaStrip: React.FC<PersonaStripProps> = ({
               )}
             </span>
             <span className="agentic-personas__name">{persona.name}</span>
+            {isHandoffTarget && (
+              <span className="agentic-personas__handoff" aria-hidden="true">
+                <i className="fas fa-arrow-right" />
+              </span>
+            )}
           </div>
         );
       })}

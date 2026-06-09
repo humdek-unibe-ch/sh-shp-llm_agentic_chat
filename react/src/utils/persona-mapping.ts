@@ -1,46 +1,13 @@
 /**
- * Helpers for working with the simplified persona library.
+ * Helpers for working with the flexible, ordered persona library.
  *
- * Each persona is authored against one of three semantic slot types
- * (`foundational` / `inclusive` / `inquiry`) that the plugin maps
- * 1:1 onto the positional teacher slots the FoResTCHAT backend
- * exposes (`persona_1` / `persona_2` / `persona_3`). The mediator
- * persona is fixed in the backend and is exposed through
+ * Personas are a plain ordered list of `{ key, name, description, … }`.
+ * Sections pick + order a subset; the PHP side turns that order into a
+ * participant map (`mediator`, `persona_1`, `persona_2`, …). The mediator
+ * persona is built by the backend and exposed through
  * `AgenticChatConfig.mediator`, not through the editable library.
  */
-import type { Persona, PersonaSlotMap, PersonaSlotType } from '../types';
-import { PERSONA_SLOT_TYPES } from '../types';
-
-/**
- * Slot-type options shown in the admin editor dropdown.
- * Mirrors `AGENTIC_CHAT_PERSONA_SLOT_TYPES` on the PHP side.
- */
-export const SLOT_TYPE_OPTIONS: ReadonlyArray<{ value: PersonaSlotType; label: string }> = [
-  { value: 'foundational', label: 'Foundational' },
-  { value: 'inclusive', label: 'Inclusive' },
-  { value: 'inquiry', label: 'Inquiry' },
-];
-
-/**
- * Semantic slot type → positional backend slot id.
- *
- * Kept in lock-step with `AGENTIC_CHAT_SLOT_TYPE_TO_BACKEND_SLOT`
- * on the PHP side. Used by the admin editor to show researchers
- * which `persona_<N>_*` slot a persona will feed at runtime.
- */
-export const SLOT_TYPE_TO_BACKEND_SLOT: Readonly<Record<PersonaSlotType, string>> = {
-  foundational: 'persona_1',
-  inclusive: 'persona_2',
-  inquiry: 'persona_3',
-};
-
-/** Convenience accessor for `SLOT_TYPE_TO_BACKEND_SLOT`. */
-export function slotTypeToBackendSlot(
-  slotType: PersonaSlotType | null | undefined
-): string {
-  if (!slotType) return SLOT_TYPE_TO_BACKEND_SLOT.foundational;
-  return SLOT_TYPE_TO_BACKEND_SLOT[slotType] ?? 'persona_1';
-}
+import type { Persona, PersonaSlotMap } from '../types';
 
 /** Build a key -> Persona lookup map. */
 export function indexPersonas(personas: Persona[]): Record<string, Persona> {
@@ -53,7 +20,7 @@ export function indexPersonas(personas: Persona[]): Record<string, Persona> {
   return out;
 }
 
-/** Resolve a slot to its persona, if any. */
+/** Resolve a participant-map slot to its persona, if any. */
 export function resolveSlotPersona(
   personas: Persona[],
   slotMap: PersonaSlotMap,
@@ -67,9 +34,8 @@ export function resolveSlotPersona(
 /**
  * Try to identify the persona behind an assistant message author label.
  *
- * The FoResTCHAT mediator uses bracketed labels like "[Foundational]".
- * Accept either an explicit persona key (matching the slot map) or a
- * case-insensitive match on display name / slot label.
+ * Accepts either an explicit persona key, a case-insensitive match on the
+ * display name, or a participant-map slot id (`mediator`, `persona_1`, …).
  */
 export function findPersonaByAuthor(
   personas: Persona[],
@@ -88,9 +54,18 @@ export function findPersonaByAuthor(
   const byName = personas.find((p) => p.name.toLowerCase() === cleaned);
   if (byName) return byName;
 
-  // 3) slot-mapped name (e.g. mediator -> first key)
+  // 3) participant-map slot match (e.g. "persona_1" -> first key).
+  //    The executor token may be a bare slot ("persona_1") or the
+  //    backend's positional executor id ("persona_1_teacher"). Match the
+  //    slot only at a digit boundary so "persona_1" does NOT swallow
+  //    "persona_12_teacher" (which would mis-attribute the 12th persona).
   for (const [slot, key] of Object.entries(slotMap)) {
-    if (key && (slot.toLowerCase().includes(cleaned) || cleaned.includes(slot.toLowerCase()))) {
+    if (!key) continue;
+    const s = slot.toLowerCase();
+    const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // exact slot, or slot followed by a non-digit (so "_teacher" suffix
+    // matches but a longer "persona_1N" index does not).
+    if (s === cleaned || new RegExp(`^${escaped}(?![0-9])`).test(cleaned)) {
       const persona = personas.find((p) => p.key === key);
       if (persona) return persona;
     }
@@ -123,11 +98,8 @@ export function slugifyPersonaKey(name: string): string {
 export function validatePersona(p: Persona, allKeys: string[]): string[] {
   const errors: string[] = [];
   if (!p.name || !p.name.trim()) errors.push('Name is required.');
-  if (!p.slot_type || !PERSONA_SLOT_TYPES.includes(p.slot_type)) {
-    errors.push('Slot type must be foundational, inclusive or inquiry.');
-  }
-  if (!p.instructions || !p.instructions.trim()) {
-    errors.push('Instructions are required.');
+  if (!p.description || !p.description.trim()) {
+    errors.push('Description is required.');
   }
   if (p.key && allKeys.filter((k) => k === p.key).length > 1) {
     errors.push(`Internal key "${p.key}" is duplicated.`);
@@ -140,52 +112,24 @@ export function validatePersona(p: Persona, allKeys: string[]): string[] {
 
 /**
  * Default empty persona used when the user clicks "Add persona".
- * Defaults to the first slot type so the row is immediately valid
- * once a name + instructions are filled in.
  */
 export function createEmptyPersona(suffix?: number | string): Persona {
   return {
     key: suffix ? `persona_${suffix}` : '',
     name: '',
-    slot_type: 'foundational',
-    instructions: '',
+    description: '',
     color: '#7f8c8d',
     avatar: '',
     enabled: true,
   };
 }
 
-/** Human-readable label for a slot type (used by row summaries / option labels). */
-export function formatSlotType(slotType: PersonaSlotType | null | undefined): string {
-  if (!slotType) return '—';
-  const found = SLOT_TYPE_OPTIONS.find((o) => o.value === slotType);
-  return found ? found.label : slotType;
-}
-
 /**
- * Group personas by slot type. Useful for the section-picker validation
- * ("at most one per slot") and for the fallback hint shown to admins.
+ * Truncate the persona description for a one-line preview shown on the
+ * persona summary card. Falls back to the first sentence; if no sentence
+ * terminator is found, takes the first 80 characters.
  */
-export function groupPersonasBySlot(personas: Persona[]): Record<PersonaSlotType, Persona[]> {
-  const out: Record<PersonaSlotType, Persona[]> = {
-    foundational: [],
-    inclusive: [],
-    inquiry: [],
-  };
-  for (const p of personas) {
-    if (p.slot_type && PERSONA_SLOT_TYPES.includes(p.slot_type)) {
-      out[p.slot_type].push(p);
-    }
-  }
-  return out;
-}
-
-/**
- * Truncate the persona instructions for a one-line preview shown on
- * the persona summary card. Falls back to the first sentence; if no
- * sentence terminator is found, takes the first 80 characters.
- */
-export function instructionsPreview(text: string | undefined, max = 80): string {
+export function descriptionPreview(text: string | undefined, max = 80): string {
   if (!text) return '';
   const trimmed = text.replace(/\s+/g, ' ').trim();
   if (!trimmed) return '';

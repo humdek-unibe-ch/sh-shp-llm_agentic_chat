@@ -67,10 +67,13 @@ export function buildCurlPost(
 
 /**
  * Build a fresh `/reflect` body for a specific user message by cloning
- * the server-supplied template and filling in run_id, message id and
- * the chosen text. Optionally overrides the thread_id so the same body
+ * the server-supplied template and filling in runId, message id and
+ * the chosen text. Optionally overrides the threadId so the same body
  * can be replayed against a brand-new thread (eg. from the "fresh
  * sequence" debug panel).
+ *
+ * AG-UI RunAgentInput is camelCase on the wire (`threadId` / `runId`),
+ * matching what the PHP proxy sends to the backend.
  */
 export function buildRunBodyFor(
   template: Record<string, unknown>,
@@ -81,9 +84,9 @@ export function buildRunBodyFor(
   // primitives, arrays and objects so this is safe.
   const cloned = JSON.parse(JSON.stringify(template)) as Record<string, unknown>;
   if (threadIdOverride) {
-    cloned.thread_id = threadIdOverride;
+    cloned.threadId = threadIdOverride;
   }
-  cloned.run_id = generateUuid();
+  cloned.runId = generateUuid();
   if (Array.isArray(cloned.messages) && cloned.messages.length > 0) {
     const first = cloned.messages[0] as Record<string, unknown>;
     first.id = generateUuid();
@@ -99,9 +102,12 @@ export function buildRunBodyFor(
 
 /**
  * Clone a `/reflect/configure` body and rebind it to a different
- * `thread_id`. Used by the "fresh sequence" panel so the persona +
- * module instructions captured for the current thread can be replayed
+ * `thread_id`. Used by the "fresh sequence" panel so the personas +
+ * module content captured for the current thread can be replayed
  * against a brand-new thread id end-to-end from Postman.
+ *
+ * The configure body is the one snake_case payload the backend accepts
+ * (`thread_id`, `module_content`, `personas`, `use_group_chat_mediator`).
  */
 export function rebindConfigureBody(
   body: Record<string, unknown>,

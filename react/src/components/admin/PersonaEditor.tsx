@@ -13,9 +13,7 @@ import type { Persona } from '../../types';
 import { PersonaRow } from './PersonaRow';
 import {
   createEmptyPersona,
-  formatSlotType,
-  groupPersonasBySlot,
-  instructionsPreview,
+  descriptionPreview,
   slugifyPersonaKey,
 } from '../../utils/persona-mapping';
 import { isImageAvatar, resolveAvatarUrl } from '../../utils/avatar';
@@ -101,6 +99,20 @@ export const PersonaEditor: React.FC<PersonaEditorProps> = ({
     setEditIndex(idx + 1);
   };
 
+  // Reorder a persona by one position. The library order is meaningful:
+  // it decides the positional backend slot (persona_1, persona_2, …) each
+  // persona feeds, so the up/down controls let admins set the speaking
+  // order of the personas.
+  const move = (idx: number, dir: -1 | 1) => {
+    const target = idx + dir;
+    if (target < 0 || target >= personas.length) return;
+    const copy = personas.slice();
+    [copy[idx], copy[target]] = [copy[target], copy[idx]];
+    onChange(copy);
+    if (editIndex === idx) setEditIndex(target);
+    else if (editIndex === target) setEditIndex(idx);
+  };
+
   const remove = async (idx: number) => {
     const target = personas[idx];
     const label = target?.name?.trim() || target?.key?.trim() || `Persona #${idx + 1}`;
@@ -120,13 +132,6 @@ export const PersonaEditor: React.FC<PersonaEditorProps> = ({
 
   const totalErrors = Object.values(errors).reduce((acc, e) => acc + e.length, 0);
 
-  // Slot-coverage hint shown next to the editor header so researchers
-  // immediately see which teacher slots have no enabled variant yet.
-  const enabledBySlot = groupPersonasBySlot(personas.filter((p) => p.enabled));
-  const uncoveredSlots = (Object.keys(enabledBySlot) as Array<keyof typeof enabledBySlot>).filter(
-    (slot) => enabledBySlot[slot].length === 0
-  );
-
   return (
     <div className="card mb-3">
       <div className="card-header d-flex justify-content-between align-items-center">
@@ -142,30 +147,17 @@ export const PersonaEditor: React.FC<PersonaEditorProps> = ({
       </div>
       <div className="card-body">
         <p className="text-muted small mb-3">
-          Global library of teacher persona variants. Each persona is tagged with a
-          slot type (<code>foundational</code> / <code>inclusive</code> / <code>inquiry</code>)
-          and feeds the matching backend slot. The mediator persona is fixed in the
-          backend and is not configurable here.
+          Ordered, flexible library of teacher personas. Each persona has a name and a
+          description (the system prompt sent to the backend). The library order decides
+          the speaking order — use the arrows to reorder. Sections pick + order which
+          personas take part and whether to use the group-chat mediator; the mediator
+          itself is built by the backend.
         </p>
 
         {totalErrors > 0 && (
           <div className="alert alert-warning small py-2 mb-3" role="alert">
             <i className="fa fa-exclamation-triangle mr-1"></i>
             {totalErrors} validation error{totalErrors === 1 ? '' : 's'} — fix before saving.
-          </div>
-        )}
-
-        {uncoveredSlots.length > 0 && (
-          <div className="alert alert-info small py-2 mb-3" role="status">
-            <i className="fa fa-info-circle mr-1"></i>
-            No enabled persona for slot{uncoveredSlots.length === 1 ? '' : 's'}:{' '}
-            {uncoveredSlots.map((s, i) => (
-              <React.Fragment key={s}>
-                <strong>{formatSlotType(s)}</strong>
-                {i < uncoveredSlots.length - 1 ? ', ' : ''}
-              </React.Fragment>
-            ))}
-            . The backend will fall back to its built-in default for these slots.
           </div>
         )}
 
@@ -192,19 +184,19 @@ export const PersonaEditor: React.FC<PersonaEditorProps> = ({
           }
           const personaErrs = errors[idx] || [];
           const cardClass = `persona-summary mb-2 p-3 border rounded bg-light${personaErrs.length ? ' persona-summary--invalid' : ''}`;
-          const preview = instructionsPreview(persona.instructions);
+          const preview = descriptionPreview(persona.description);
           return (
             <div key={`row-${idx}`} className={cardClass}>
               <div className="d-flex align-items-center">
                 <Avatar persona={persona} />
                 <div className="ml-3 flex-grow-1 min-width-0">
                   <div className="d-flex align-items-center">
+                    <span className="badge badge-light border mr-2" title="Speaking order">
+                      #{idx + 1}
+                    </span>
                     <strong className="text-truncate">
                       {persona.name || <em className="text-muted">Untitled persona</em>}
                     </strong>
-                    <span className="badge badge-light border ml-2">
-                      {formatSlotType(persona.slot_type)}
-                    </span>
                     {!persona.enabled && (
                       <span className="badge badge-secondary ml-2">disabled</span>
                     )}
@@ -220,6 +212,22 @@ export const PersonaEditor: React.FC<PersonaEditorProps> = ({
                 </div>
                 {!disabled && (
                   <div className="btn-group btn-group-sm ml-2">
+                    <button
+                      className="btn btn-sm btn-outline-secondary"
+                      onClick={() => move(idx, -1)}
+                      disabled={idx === 0}
+                      title="Move up"
+                    >
+                      <i className="fa fa-arrow-up"></i>
+                    </button>
+                    <button
+                      className="btn btn-sm btn-outline-secondary"
+                      onClick={() => move(idx, 1)}
+                      disabled={idx === personas.length - 1}
+                      title="Move down"
+                    >
+                      <i className="fa fa-arrow-down"></i>
+                    </button>
                     <button
                       className="btn btn-sm btn-outline-secondary"
                       onClick={() => startEdit(idx)}

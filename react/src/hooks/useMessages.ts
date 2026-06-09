@@ -30,8 +30,19 @@ export interface UseMessagesResult {
   appendUserMessage: (text: string) => void;
   handleAgUiEvent: (event: AgUiEvent) => void;
   clear: () => void;
-  /** Persona key currently in focus, derived from handoff / speaker events. */
+  /**
+   * Persona key of the CURRENT speaker, derived from speaker metadata on
+   * STEP_STARTED / TEXT_MESSAGE_* / ACTIVITY_SNAPSHOT events. A handoff
+   * tool call does NOT change this — see `handoffTarget`.
+   */
   currentPersonaKey: string | null;
+  /**
+   * Raw target of an in-flight `handoff_to_<x>` tool call (persona key,
+   * name or executor id). Set when the mediator hands off and cleared as
+   * soon as the next speaker actually starts. Lets the UI show
+   * "Handing off to X" without prematurely switching the active speaker.
+   */
+  handoffTarget: string | null;
 }
 
 let optimisticIdCounter = 0;
@@ -71,6 +82,7 @@ export function useMessages(): UseMessagesResult {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inFlight, setInFlight] = useState<InFlightMessage[]>([]);
   const [currentPersonaKey, setCurrentPersonaKey] = useState<string | null>(null);
+  const [handoffTarget, setHandoffTarget] = useState<string | null>(null);
 
   const buffersRef = useRef<Record<string, InFlightMessage>>({});
 
@@ -102,22 +114,34 @@ export function useMessages(): UseMessagesResult {
     buffersRef.current = {};
     commitInFlight();
     setCurrentPersonaKey(null);
+    setHandoffTarget(null);
   }, [commitInFlight]);
 
   const handleAgUiEvent = useCallback((event: AgUiEvent) => {
     const messageId = getMessageId(event);
     const speaker = speakerFromEvent(event);
+    const isHandoffToolCall =
+      event.type === 'TOOL_CALL_START' && !!extractHandoffTarget(event);
 
     // If the normaliser has resolved a persona key for the current
     // speaker, promote it to the global "active" state so the persona
-    // strip and typing indicator follow along.
-    if (speaker.authorPersonaKey) {
+    // strip and typing indicator follow along — and clear any pending
+    // handoff because the target (or someone) is now actually speaking.
+    //
+    // A handoff TOOL_CALL_START is explicitly excluded: it is emitted by
+    // the *current* speaker (often the mediator) to announce the NEXT
+    // speaker, so honouring its author here would wrongly keep/clear the
+    // active speaker before the handoff target has spoken.
+    if (speaker.authorPersonaKey && !isHandoffToolCall) {
       setCurrentPersonaKey(speaker.authorPersonaKey);
+      setHandoffTarget(null);
     }
 
     switch (event.type) {
       case 'TEXT_MESSAGE_START': {
         if (!messageId) return;
+        // A bubble is starting to stream → any pending handoff is resolved.
+        setHandoffTarget(null);
         buffersRef.current[messageId] = {
           id: messageId,
           role: (event.role as InFlightMessage['role']) || 'assistant',
@@ -209,7 +233,10 @@ export function useMessages(): UseMessagesResult {
       case 'TOOL_CALL_START': {
         const handoffKey = extractHandoffTarget(event);
         if (handoffKey) {
-          setCurrentPersonaKey(handoffKey);
+          // Record the handoff target only; the active speaker stays put
+          // until the target actually starts streaming. The UI shows a
+          // "Handing off to X" hint in the meantime.
+          setHandoffTarget(handoffKey);
         }
         return;
       }
@@ -243,5 +270,6 @@ export function useMessages(): UseMessagesResult {
     handleAgUiEvent,
     clear,
     currentPersonaKey,
+    handoffTarget,
   };
 }

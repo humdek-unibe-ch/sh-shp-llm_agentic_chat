@@ -3,7 +3,7 @@
  *
  * Card-based panel mirroring sh-shp-llm's `ModelDefaultsSection` style:
  * a clean Bootstrap 4.6 card with a header, body, dirty-tracked fields,
- * and Test buttons in the header for /health and /reflect/defaults.
+ * and a Test button in the header for /health.
  *
  * @module components/admin/BackendSettingsPanel
  */
@@ -15,12 +15,10 @@ export interface BackendSettingsPanelProps {
   value: BackendSettings;
   onChange: (patch: Partial<BackendSettings>) => void;
   onTestHealth: () => Promise<{ ok: boolean; data?: Record<string, unknown>; error?: string }>;
-  onFetchDefaults: () => Promise<{ ok: boolean; data?: Record<string, unknown>; error?: string }>;
   disabled?: boolean;
 }
 
 interface ProbeResult {
-  kind: 'health' | 'defaults';
   ok: boolean;
   message: string;
 }
@@ -31,36 +29,20 @@ export const BackendSettingsPanel: React.FC<BackendSettingsPanelProps> = ({
   value,
   onChange,
   onTestHealth,
-  onFetchDefaults,
   disabled,
 }) => {
   const [probe, setProbe] = useState<ProbeResult | null>(null);
-  const [probing, setProbing] = useState<'health' | 'defaults' | null>(null);
+  const [probing, setProbing] = useState(false);
 
   const set = <K extends keyof BackendSettings>(key: K, v: BackendSettings[K]) =>
     onChange({ [key]: v } as Partial<BackendSettings>);
 
   const runHealth = async () => {
-    setProbing('health');
+    setProbing(true);
     setProbe(null);
     const res = await onTestHealth();
-    setProbing(null);
+    setProbing(false);
     setProbe({
-      kind: 'health',
-      ok: res.ok,
-      message: res.ok
-        ? `OK · ${truncate(JSON.stringify(res.data ?? {}), 220)}`
-        : `Error · ${res.error || 'Unknown error'}`,
-    });
-  };
-
-  const runDefaults = async () => {
-    setProbing('defaults');
-    setProbe(null);
-    const res = await onFetchDefaults();
-    setProbing(null);
-    setProbe({
-      kind: 'defaults',
       ok: res.ok,
       message: res.ok
         ? `OK · ${truncate(JSON.stringify(res.data ?? {}), 220)}`
@@ -82,24 +64,12 @@ export const BackendSettingsPanel: React.FC<BackendSettingsPanelProps> = ({
             type="button"
             className="btn btn-sm btn-outline-secondary"
             onClick={runHealth}
-            disabled={!!probing}
+            disabled={probing}
           >
-            {probing === 'health' ? (
+            {probing ? (
               <><span className="spinner-border spinner-border-sm mr-1" role="status" aria-hidden="true"></span>Testing…</>
             ) : (
               <><i className="fa fa-heartbeat mr-1"></i>Test /health</>
-            )}
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm btn-outline-secondary"
-            onClick={runDefaults}
-            disabled={!!probing}
-          >
-            {probing === 'defaults' ? (
-              <><span className="spinner-border spinner-border-sm mr-1" role="status" aria-hidden="true"></span>Fetching…</>
-            ) : (
-              <><i className="fa fa-cloud-download-alt mr-1"></i>/reflect/defaults</>
             )}
           </button>
         </div>
@@ -112,9 +82,7 @@ export const BackendSettingsPanel: React.FC<BackendSettingsPanelProps> = ({
 
         {probe && (
           <div className={`alert ${probe.ok ? 'alert-info' : 'alert-warning'} small py-2 mb-3`} role="alert">
-            <strong className="mr-1">
-              {probe.kind === 'health' ? '/health:' : '/reflect/defaults:'}
-            </strong>
+            <strong className="mr-1">/health:</strong>
             {probe.message}
           </div>
         )}
@@ -161,17 +129,6 @@ export const BackendSettingsPanel: React.FC<BackendSettingsPanelProps> = ({
         </div>
 
         <div className="form-row">
-          <div className="form-group col-md-6">
-            <label className="small font-weight-bold" htmlFor="defaults-path">/reflect/defaults path</label>
-            <input
-              id="defaults-path"
-              type="text"
-              className="form-control form-control-sm"
-              value={value.defaults_path}
-              onChange={(e) => set('defaults_path', e.target.value)}
-              disabled={disabled}
-            />
-          </div>
           <div className="form-group col-md-6">
             <label className="small font-weight-bold" htmlFor="health-path">/health path</label>
             <input
