@@ -198,8 +198,20 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
         $row['pending_interrupts_json'] = $this->decodeJson($row['pending_interrupts'] ?? null);
         $row['debug_meta_json'] = $this->decodeJson($row['debug_meta'] ?? null);
 
+        // Resolve a friendly author label per message so the viewer shows
+        // the persona who actually spoke ("Mediator", "Lea", …) instead of
+        // the raw llmMessages role ("assistant"). Resolution happens at read
+        // time from the persisted sent_context + the thread's participant map
+        // + the global persona library, so existing threads are fixed
+        // retroactively without a data migration.
+        $participantMap = is_array($row['persona_slot_map_json'] ?? null)
+            ? $row['persona_slot_map_json']
+            : [];
+        $nameByKey = $this->buildPersonaNameMap();
+
         foreach ($messages as &$m) {
             $m['sent_context_json'] = $this->decodeJson($m['sent_context'] ?? null);
+            $m['author_label'] = $this->resolveMessageAuthor($m, $nameByKey, $participantMap);
         }
         unset($m);
 
@@ -208,6 +220,120 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
             'messages' => $messages,
             'playground' => $this->buildPlaygroundPayloads($row),
         ];
+    }
+
+    /**
+     * Build a persona key -> display name map from the global persona
+     * library plus the fixed mediator descriptor. Used to label thread
+     * messages with the persona who actually spoke.
+     *
+     * @return array<string,string>
+     */
+    private function buildPersonaNameMap()
+    {
+        $map = [AGENTIC_CHAT_MEDIATOR_KEY => AGENTIC_CHAT_MEDIATOR_NAME];
+        $cfg = $this->getAgenticService()->getGlobalConfig();
+        $personas = is_array($cfg['personas'] ?? null) ? $cfg['personas'] : [];
+        foreach ($personas as $persona) {
+            $key = isset($persona['key']) ? (string) $persona['key'] : '';
+            $name = isset($persona['name']) ? trim((string) $persona['name']) : '';
+            if ($key !== '' && $name !== '') {
+                $map[$key] = $name;
+            }
+        }
+        return $map;
+    }
+
+    /**
+     * Resolve the display name of a message author from its persisted
+     * speaker metadata. Falls back through persona key -> participant-map
+     * slot -> humanised executor id -> capitalised role, so the viewer
+     * always shows the most specific label available.
+     *
+     * @param array                $message        llmMessages row (+ sent_context_json).
+     * @param array<string,string> $nameByKey      persona key -> display name.
+     * @param array<string,string> $participantMap slot -> persona key.
+     * @return string
+     */
+    private function resolveMessageAuthor(array $message, array $nameByKey, array $participantMap)
+    {
+        $role = strtolower((string) ($message['role'] ?? ''));
+        if ($role === 'user') {
+            return 'User';
+        }
+        if ($role === 'system') {
+            return 'System';
+        }
+
+        $ctx = is_array($message['sent_context_json'] ?? null)
+            ? $message['sent_context_json']
+            : [];
+
+        // 1) Resolved persona key (set by the event normaliser at stream time).
+        $key = isset($ctx['authorPersonaKey']) ? (string) $ctx['authorPersonaKey'] : '';
+        if ($key !== '' && isset($nameByKey[$key])) {
+            return $nameByKey[$key];
+        }
+
+        // 2) Backend slot (mediator / persona_N) -> participant map -> key.
+        $slot = isset($ctx['authorSlot']) ? (string) $ctx['authorSlot'] : '';
+        if ($slot !== '') {
+            if ($slot === AGENTIC_CHAT_SLOT_MEDIATOR && isset($nameByKey[AGENTIC_CHAT_MEDIATOR_KEY])) {
+                return $nameByKey[AGENTIC_CHAT_MEDIATOR_KEY];
+            }
+            $slotKey = isset($participantMap[$slot]) ? (string) $participantMap[$slot] : '';
+            if ($slotKey !== '' && isset($nameByKey[$slotKey])) {
+                return $nameByKey[$slotKey];
+            }
+        }
+
+        // 3) Raw author name / executor id -> humanise.
+        foreach (['authorName', 'sourceExecutorId'] as $field) {
+            $raw = isset($ctx[$field]) ? trim((string) $ctx[$field]) : '';
+            if ($raw !== '') {
+                $label = $this->humanizeExecutorId($raw, $nameByKey, $participantMap);
+                if ($label !== '') {
+                    return $label;
+                }
+            }
+        }
+
+        // 4) Last resort: capitalised role.
+        return $role !== '' ? ucfirst($role) : 'Assistant';
+    }
+
+    /**
+     * Convert a backend executor id into a friendly label:
+     *   group_chat_mediator -> Mediator (via persona map)
+     *   persona_2_teacher   -> the 2nd persona's name (or "Teacher 2")
+     *   anything else       -> Title Cased words
+     *
+     * @param string               $raw
+     * @param array<string,string> $nameByKey
+     * @param array<string,string> $participantMap
+     * @return string
+     */
+    private function humanizeExecutorId($raw, array $nameByKey, array $participantMap)
+    {
+        // *_mediator -> the mediator slot.
+        if (strpos($raw, 'mediator') !== false) {
+            return $nameByKey[AGENTIC_CHAT_MEDIATOR_KEY] ?? 'Mediator';
+        }
+        // persona_<N>_teacher / persona_<N> -> positional slot.
+        if (preg_match('/^persona_(\d+)(?:_.*)?$/', $raw, $m)) {
+            $slot = AGENTIC_CHAT_PERSONA_SLOT_PREFIX . $m[1];
+            $key = isset($participantMap[$slot]) ? (string) $participantMap[$slot] : '';
+            if ($key !== '' && isset($nameByKey[$key])) {
+                return $nameByKey[$key];
+            }
+            return 'Teacher ' . $m[1];
+        }
+        // Generic slug -> Title Case (skip when it's just a UUID-ish blob).
+        $clean = trim(preg_replace('/[_\-]+/', ' ', $raw));
+        if ($clean === '' || $clean === $raw && preg_match('/^[0-9a-f]{8,}$/i', $raw)) {
+            return '';
+        }
+        return ucwords($clean);
     }
 
     /**

@@ -423,6 +423,12 @@ export interface ThreadDetailMessage {
   content: string;
   sent_context: string | null;
   sent_context_json: Record<string, unknown> | null;
+  /**
+   * Friendly speaker label resolved server-side from sent_context + the
+   * thread's participant map + the global persona library (e.g. "Mediator",
+   * "Lea", "Teacher 2"). Falls back to a capitalised role.
+   */
+  author_label?: string;
   created_at: string;
   is_validated: 0 | 1 | boolean;
 }

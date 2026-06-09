@@ -2,7 +2,7 @@
  * ThreadDetail — selected thread inspector with tabs:
  *   - Messages: chronological visible message log; each user message
  *     carries a "copy" toolbar to send the same payload via Postman/curl.
- *   - Debug: persona slot map + pending interrupts + debug events,
+ *   - Debug: participant map + pending interrupts + debug events,
  *     plus the developer "playground" with /reflect/configure and
  *     /reflect bodies + curl one-liners.
  *   - Raw: full thread row with usage and metadata.
@@ -60,6 +60,10 @@ interface MessageProps {
 const Message: React.FC<MessageProps> = ({ msg, playground }) => {
   const role = (msg.role || 'assistant').toLowerCase();
   const isUser = role === 'user';
+  // Prefer the server-resolved persona label ("Mediator", "Lea", …) over
+  // the raw role so the debug viewer matches what was shown in the chat.
+  const authorLabel = (msg.author_label && msg.author_label.trim())
+    || (role === 'user' ? 'User' : role === 'system' ? 'System' : 'Assistant');
 
   // Lazy: rebuild the body fresh on every click so each Postman replay
   // gets a fresh `run_id` / `messages[0].id` UUID. Building it inline
@@ -83,7 +87,10 @@ const Message: React.FC<MessageProps> = ({ msg, playground }) => {
   return (
     <div className={`agentic-threads-detail__message agentic-threads-detail__message--${role}`}>
       <div className="agentic-threads-detail__message-meta">
-        <strong>{role}</strong>
+        <strong>{authorLabel}</strong>
+        {!isUser && authorLabel.toLowerCase() !== role && (
+          <span className="badge badge-light text-muted">{role}</span>
+        )}
         <span>·</span>
         <span>#{msg.id}</span>
         <span>·</span>
@@ -485,7 +492,9 @@ export const ThreadDetail: React.FC<ThreadDetailProps> = ({
               </div>
             )}
 
-            <h6 className="small font-weight-bold mt-3">Persona slot map</h6>
+            <h6 className="small font-weight-bold mt-3">
+              Participant map <span className="text-muted">(backend slot → persona key)</span>
+            </h6>
             <pre className="agentic-threads-detail__json mb-3">{asPretty(t.persona_slot_map_json)}</pre>
 
             <h6 className="small font-weight-bold mt-3">Pending interrupts</h6>
