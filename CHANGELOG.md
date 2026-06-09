@@ -4,7 +4,8 @@ All notable changes to the **sh-shp-llm_agentic_chat** plugin are documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-06-09
+
 
 ### Changed
 - **Ordered, flexible personas replace the fixed teacher-slot model.** The
