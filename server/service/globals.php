@@ -171,6 +171,14 @@ define('AGENTIC_CHAT_EVT_CUSTOM', 'CUSTOM');
 
 /* =========================================================================
  * THREAD STATUS VALUES
+ *
+ * These are the canonical thread-status CODES. Each value mirrors a
+ * `lookups.lookup_code` row of type `agenticChatThreadStatus` (seeded in
+ * v1.0.0.sql) and the `ThreadStatus` union in the React UI. The
+ * `agenticChatThreads.id_status` column is a foreign key into `lookups`;
+ * AgenticChatThreadService resolves these codes to the FK id on write and
+ * hydrates the code back from the FK on read, so the status string is
+ * identical across DB -> PHP -> React.
  * ========================================================================= */
 
 define('AGENTIC_CHAT_STATUS_IDLE', 'idle');

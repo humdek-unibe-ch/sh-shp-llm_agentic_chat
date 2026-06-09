@@ -89,7 +89,7 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
         }
 
         if (!empty($filters['status'])) {
-            $where[] = 't.status = ?';
+            $where[] = 'ls.lookup_code = ?';
             $params[] = (string) $filters['status'];
         }
         if (!empty($filters['query'])) {
@@ -106,6 +106,7 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
                        FROM agenticChatThreads t
                   LEFT JOIN llmConversations c ON c.id = t.id_llmConversations
                   LEFT JOIN users u ON u.id = t.id_users
+                  LEFT JOIN lookups ls ON ls.id = t.id_status
                        $whereSql";
         $totalRow = $this->db->query_db_first($countSql, $params);
         $total = (int) ($totalRow['total'] ?? 0);
@@ -118,7 +119,7 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
                         t.agui_thread_id,
                         t.last_run_id,
                         t.backend_url,
-                        t.status,
+                        ls.lookup_code AS status,
                         t.is_completed,
                         t.last_error,
                         t.usage_total_tokens,
@@ -133,6 +134,7 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
                    FROM agenticChatThreads t
               LEFT JOIN llmConversations c ON c.id = t.id_llmConversations
               LEFT JOIN users u ON u.id = t.id_users
+              LEFT JOIN lookups ls ON ls.id = t.id_status
                    $whereSql
                ORDER BY t.updated_at DESC, t.id DESC
                   LIMIT $perPage OFFSET $offset";
@@ -166,6 +168,7 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
 
         $row = $this->db->query_db_first(
             "SELECT t.*,
+                    ls.lookup_code AS status,
                     c.title AS conversation_title,
                     c.created_at AS conversation_created_at,
                     c.updated_at AS conversation_updated_at,
@@ -174,6 +177,7 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
                FROM agenticChatThreads t
           LEFT JOIN llmConversations c ON c.id = t.id_llmConversations
           LEFT JOIN users u ON u.id = t.id_users
+          LEFT JOIN lookups ls ON ls.id = t.id_status
               WHERE t.id = ?",
             [$threadId]
         );
@@ -505,15 +509,20 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
     }
 
     /**
-     * Distinct status values currently present in agenticChatThreads, useful
-     * to populate the status filter dropdown without round-trips to lookups.
+     * Distinct status codes currently present in agenticChatThreads, used to
+     * populate the status filter dropdown. The status code is resolved from
+     * the `id_status` FK via the `lookups` table (type agenticChatThreadStatus).
      *
      * @return array<int,string>
      */
     public function getDistinctStatuses()
     {
         $rows = $this->db->query_db(
-            "SELECT DISTINCT status FROM agenticChatThreads ORDER BY status"
+            "SELECT DISTINCT ls.lookup_code AS status
+               FROM agenticChatThreads t
+          LEFT JOIN lookups ls ON ls.id = t.id_status
+              WHERE ls.lookup_code IS NOT NULL
+           ORDER BY ls.lookup_code"
         ) ?: [];
         return array_map(static function ($r) {
             return (string) ($r['status'] ?? '');
@@ -530,12 +539,13 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
         $row = $this->db->query_db_first(
             "SELECT
                 COUNT(*) AS total,
-                SUM(CASE WHEN status = 'idle' THEN 1 ELSE 0 END) AS idle,
-                SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
-                SUM(CASE WHEN status = 'awaiting_input' THEN 1 ELSE 0 END) AS awaiting_input,
-                SUM(CASE WHEN status = 'completed' OR is_completed = 1 THEN 1 ELSE 0 END) AS completed,
-                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
-               FROM agenticChatThreads"
+                SUM(CASE WHEN ls.lookup_code = 'idle' THEN 1 ELSE 0 END) AS idle,
+                SUM(CASE WHEN ls.lookup_code = 'running' THEN 1 ELSE 0 END) AS running,
+                SUM(CASE WHEN ls.lookup_code = 'awaiting_input' THEN 1 ELSE 0 END) AS awaiting_input,
+                SUM(CASE WHEN ls.lookup_code = 'completed' OR t.is_completed = 1 THEN 1 ELSE 0 END) AS completed,
+                SUM(CASE WHEN ls.lookup_code = 'failed' THEN 1 ELSE 0 END) AS failed
+               FROM agenticChatThreads t
+          LEFT JOIN lookups ls ON ls.id = t.id_status"
         );
         if (!is_array($row)) {
             return [

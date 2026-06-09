@@ -57,7 +57,7 @@ class AgenticChatThreadService
                 'id_sections' => $sectionId,
                 'agui_thread_id' => $aguiThreadId,
                 'backend_url' => $backendUrl,
-                'status' => AGENTIC_CHAT_STATUS_IDLE,
+                'id_status' => $this->statusId(AGENTIC_CHAT_STATUS_IDLE),
                 'is_completed' => 0,
             ]);
 
@@ -87,7 +87,7 @@ class AgenticChatThreadService
         $existing = $this->getActiveThreadForUser($userId, $sectionId);
         if ($existing !== null) {
             $this->db->update_by_ids('agenticChatThreads', [
-                'status' => AGENTIC_CHAT_STATUS_COMPLETED,
+                'id_status' => $this->statusId(AGENTIC_CHAT_STATUS_COMPLETED),
                 'is_completed' => 1,
             ], ['id' => $existing['id']]);
         }
@@ -110,9 +110,11 @@ class AgenticChatThreadService
     public function getActiveThreadForUser($userId, $sectionId)
     {
         $row = $this->db->query_db_first(
-            "SELECT t.*, c.title AS conversation_title, c.created_at AS conversation_created_at
+            "SELECT t.*, ls.lookup_code AS status,
+                    c.title AS conversation_title, c.created_at AS conversation_created_at
                FROM agenticChatThreads t
           INNER JOIN llmConversations c ON c.id = t.id_llmConversations
+           LEFT JOIN lookups ls ON ls.id = t.id_status
               WHERE t.id_users = :id_users
                 AND t.id_sections = :id_sections
                 AND t.is_completed = 0
@@ -143,9 +145,11 @@ class AgenticChatThreadService
     public function getLatestThreadForUser($userId, $sectionId)
     {
         $row = $this->db->query_db_first(
-            "SELECT t.*, c.title AS conversation_title, c.created_at AS conversation_created_at
+            "SELECT t.*, ls.lookup_code AS status,
+                    c.title AS conversation_title, c.created_at AS conversation_created_at
                FROM agenticChatThreads t
           INNER JOIN llmConversations c ON c.id = t.id_llmConversations
+           LEFT JOIN lookups ls ON ls.id = t.id_status
               WHERE t.id_users = :id_users
                 AND t.id_sections = :id_sections
                 AND c.deleted = 0
@@ -168,7 +172,10 @@ class AgenticChatThreadService
     public function getThreadById($threadId)
     {
         $row = $this->db->query_db_first(
-            "SELECT * FROM agenticChatThreads WHERE id = ?",
+            "SELECT t.*, ls.lookup_code AS status
+               FROM agenticChatThreads t
+          LEFT JOIN lookups ls ON ls.id = t.id_status
+              WHERE t.id = ?",
             [$threadId]
         );
         return $row ?: null;
@@ -183,7 +190,10 @@ class AgenticChatThreadService
     public function getThreadByConversationId($conversationId)
     {
         $row = $this->db->query_db_first(
-            "SELECT * FROM agenticChatThreads WHERE id_llmConversations = ?",
+            "SELECT t.*, ls.lookup_code AS status
+               FROM agenticChatThreads t
+          LEFT JOIN lookups ls ON ls.id = t.id_status
+              WHERE t.id_llmConversations = ?",
             [$conversationId]
         );
         return $row ?: null;
@@ -201,13 +211,23 @@ class AgenticChatThreadService
         if (empty($fields)) {
             return;
         }
+        // Callers pass a readable status CODE (AGENTIC_CHAT_STATUS_*); translate
+        // it to the id_status foreign key. A missing/unknown code is dropped
+        // rather than written as a NULL FK so the status simply stays put.
+        if (array_key_exists('status', $fields)) {
+            $statusId = $this->statusId($fields['status']);
+            unset($fields['status']);
+            if ($statusId !== null) {
+                $fields['id_status'] = $statusId;
+            }
+        }
         $allowed = [
             'last_run_id',
             'persona_slot_map',
             'module_content',
             'use_group_chat_mediator',
             'pending_interrupts',
-            'status',
+            'id_status',
             'is_completed',
             'last_error',
             'usage_total_tokens',
@@ -220,6 +240,27 @@ class AgenticChatThreadService
             return;
         }
         $this->db->update_by_ids('agenticChatThreads', $clean, ['id' => $threadId]);
+    }
+
+    /**
+     * Resolve a thread-status lookup CODE (e.g. AGENTIC_CHAT_STATUS_IDLE) to
+     * its `lookups.id` so it can be written to the `id_status` FK column.
+     *
+     * Uses the cached `get_lookup_id_by_code` helper, so repeated status
+     * writes during a run do not hit the database every time.
+     *
+     * @param string|null $code Thread-status lookup_code.
+     * @return int|null lookups.id or null when the code is empty/unknown.
+     */
+    private function statusId($code)
+    {
+        if ($code === null || $code === '') {
+            return null;
+        }
+        return $this->db->get_lookup_id_by_code(
+            AGENTIC_CHAT_LOOKUP_TYPE_THREAD_STATUS,
+            (string) $code
+        );
     }
 
     /**
@@ -320,11 +361,6 @@ class AgenticChatThreadService
     {
         try {
             $transaction = $this->services->get_transaction();
-            $byMap = [
-                'insert' => method_exists($transaction, 'transaction_types_insert') ? null : null,
-                'update' => null,
-                'delete' => null,
-            ];
             // Defensive: not all SelfHelp builds expose the helper signatures
             // identically, so we degrade gracefully.
             if (method_exists($transaction, 'add_transaction')) {

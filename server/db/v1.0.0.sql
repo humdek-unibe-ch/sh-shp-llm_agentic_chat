@@ -18,7 +18,8 @@
 --      `sh-shp-llm`.
 --   5. Creates the `agenticChatThreads` table linking llmConversations
 --      to AG-UI thread metadata.
---   6. Registers transaction logging and thread-status lookups.
+--   6. Registers transaction logging and the thread-status lookups that
+--      back the `agenticChatThreads.id_status` foreign key.
 --      (Personas are an ordered, flexible library — there are no fixed
 --       persona slot types; the mediator is toggled per section.)
 --   7. Registers hooks for the personas-editor field, the admin panel,
@@ -300,7 +301,7 @@ CREATE TABLE IF NOT EXISTS `agenticChatThreads` (
     `module_content`           LONGTEXT DEFAULT NULL COMMENT 'Module/reflection text sent to /reflect/configure',
     `use_group_chat_mediator`  TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'Whether this thread was configured with a group-chat mediator',
     `pending_interrupts`       LONGTEXT DEFAULT NULL COMMENT 'JSON array of AG-UI interrupts awaiting user input',
-    `status`                   VARCHAR(32) NOT NULL DEFAULT 'idle' COMMENT 'idle, configuring, running, awaiting_input, completed, failed',
+    `id_status`                INT(10) UNSIGNED ZEROFILL NOT NULL COMMENT 'Thread status FK -> lookups.id (type_code = agenticChatThreadStatus)',
     `is_completed`             TINYINT(1) NOT NULL DEFAULT 0,
     `last_error`               TEXT DEFAULT NULL,
     `usage_total_tokens`       INT DEFAULT NULL,
@@ -313,7 +314,7 @@ CREATE TABLE IF NOT EXISTS `agenticChatThreads` (
     UNIQUE KEY `uniq_conversation` (`id_llmConversations`),
     KEY `idx_user` (`id_users`),
     KEY `idx_section` (`id_sections`),
-    KEY `idx_status` (`status`),
+    KEY `idx_status` (`id_status`),
     KEY `idx_completed` (`is_completed`),
     KEY `idx_thread` (`agui_thread_id`),
     CONSTRAINT `fk_agenticChatThreads_users`
@@ -321,7 +322,9 @@ CREATE TABLE IF NOT EXISTS `agenticChatThreads` (
     CONSTRAINT `fk_agenticChatThreads_sections`
         FOREIGN KEY (`id_sections`) REFERENCES `sections` (`id`) ON DELETE SET NULL,
     CONSTRAINT `fk_agenticChatThreads_llmConversations`
-        FOREIGN KEY (`id_llmConversations`) REFERENCES `llmConversations` (`id`) ON DELETE CASCADE
+        FOREIGN KEY (`id_llmConversations`) REFERENCES `llmConversations` (`id`) ON DELETE CASCADE,
+    CONSTRAINT `fk_agenticChatThreads_status`
+        FOREIGN KEY (`id_status`) REFERENCES `lookups` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 
@@ -332,13 +335,16 @@ INSERT IGNORE INTO `lookups` (`type_code`, `lookup_code`, `lookup_value`, `looku
 VALUES
 ('transactionBy', 'by_llm_agentic_chat', 'By LLM Agentic Chat Plugin', 'Actions performed by the LLM Agentic Chat plugin'),
 
--- thread status enum values used by the controller and the React UI
-('agenticChatThreadStatus', 'agentic_status_idle',            'Idle',            'Thread is created but no run is in progress.'),
-('agenticChatThreadStatus', 'agentic_status_configuring',     'Configuring',     'POST /reflect/configure is in flight.'),
-('agenticChatThreadStatus', 'agentic_status_running',         'Running',         'Run in progress; SSE stream is open.'),
-('agenticChatThreadStatus', 'agentic_status_awaiting_input',  'Awaiting input',  'Run paused on a HITL interrupt.'),
-('agenticChatThreadStatus', 'agentic_status_completed',       'Completed',       'Backend signalled "Case complete." for this thread.'),
-('agenticChatThreadStatus', 'agentic_status_failed',          'Failed',          'Run errored or backend connection failed.');
+-- Thread status enum backing the `agenticChatThreads.id_status` FK. The
+-- lookup_code values intentionally match the AGENTIC_CHAT_STATUS_* constants
+-- in globals.php and the ThreadStatus union in the React UI, so the status
+-- code travels unchanged from DB -> PHP -> React.
+('agenticChatThreadStatus', 'idle',            'Idle',            'Thread is created but no run is in progress.'),
+('agenticChatThreadStatus', 'configuring',     'Configuring',     'POST /reflect/configure is in flight.'),
+('agenticChatThreadStatus', 'running',         'Running',         'Run in progress; SSE stream is open.'),
+('agenticChatThreadStatus', 'awaiting_input',  'Awaiting input',  'Run paused on a HITL interrupt.'),
+('agenticChatThreadStatus', 'completed',       'Completed',       'Backend signalled "Case complete." for this thread.'),
+('agenticChatThreadStatus', 'failed',          'Failed',          'Run errored or backend connection failed.');
 
 
 -- -----------------------------------------------------------------------------
