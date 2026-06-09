@@ -225,7 +225,8 @@ INSERT IGNORE INTO `fields` (`id`, `name`, `id_type`, `display`) VALUES
 (NULL, 'agentic_chat_use_group_chat_mediator', get_field_type_id('checkbox'), '0'),
 (NULL, 'agentic_chat_auto_start',        get_field_type_id('checkbox'), '0'),
 (NULL, 'agentic_chat_show_persona_strip', get_field_type_id('checkbox'), '0'),
-(NULL, 'agentic_chat_show_run_status',    get_field_type_id('checkbox'), '0');
+(NULL, 'agentic_chat_show_run_status',    get_field_type_id('checkbox'), '0'),
+(NULL, 'agentic_chat_show_new_thread_button', get_field_type_id('checkbox'), '0');
 
 -- -- External (display=1): translatable user-visible labels.
 INSERT IGNORE INTO `fields` (`id`, `name`, `id_type`, `display`) VALUES
@@ -257,6 +258,7 @@ INSERT IGNORE INTO `styles_fields` (`id_styles`, `id_fields`, `default_value`, `
 (get_style_id('agenticChat'), get_field_id('agentic_chat_auto_start'),       '1',   'When enabled, the chat sends the kickoff token __auto_start__ as soon as the user opens the section.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_show_persona_strip'), '1', 'Show the strip with active/visited persona avatars above the messages.'),
 (get_style_id('agenticChat'), get_field_id('agentic_chat_show_run_status'),    '1', 'Show the small run-status badge in the chat header.'),
+(get_style_id('agenticChat'), get_field_id('agentic_chat_show_new_thread_button'), '1', 'When enabled (default), a "start a new thread" button is offered once the conversation is complete, so the user can begin a fresh reflection. When disabled, a finished conversation stays visible but read-only (no new thread can be started). The button label comes from "agentic_chat_reset_label".'),
 
 -- internal: speech-to-text (fields registered by sh-shp-llm; we just link them
 -- and ship sensible defaults so the microphone button works out of the box).

@@ -460,7 +460,12 @@ class AgenticChatController extends BaseController
     }
 
     /**
-     * Resolve the active thread + visible messages for the React UI.
+     * Resolve the thread + visible messages for the React UI.
+     *
+     * Uses the LATEST thread (including completed ones) so a closed/complete
+     * conversation stays fully visible after a page reload — the React chat
+     * renders it read-only (history shown, input replaced by the completion
+     * notice). Write paths still target the active (non-completed) thread.
      *
      * @param int $userId
      * @return array
@@ -468,7 +473,7 @@ class AgenticChatController extends BaseController
     private function getThreadView($userId)
     {
         $sectionId = $this->model->getSectionId();
-        $thread = $this->service->getThreadService()->getActiveThreadForUser($userId, $sectionId);
+        $thread = $this->service->getThreadService()->getLatestThreadForUser($userId, $sectionId);
         if (!$thread) {
             return [
                 'thread'   => null,

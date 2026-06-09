@@ -36,6 +36,10 @@ require_once __DIR__ . "/../../../service/AgenticChatService.php";
  *      Render the strip with active/visited persona avatars.
  *  agentic_chat_show_run_status (checkbox, internal)
  *      Render the run-status badge in the chat header.
+ *  agentic_chat_show_new_thread_button (checkbox, internal)
+ *      Offer a "start a new thread" button once a conversation is
+ *      complete. Disable to keep a finished conversation visible but
+ *      locked (read-only, no new thread). Defaults to enabled.
  *  enable_speech_to_text (checkbox, internal)
  *      Enable the microphone button + Whisper transcription pipeline.
  *      Field declared by `sh-shp-llm` and linked into agenticChat.
@@ -127,6 +131,19 @@ class AgenticChatModel extends StyleModel
     public function isRunStatusVisible()
     {
         return $this->get_db_field('agentic_chat_show_run_status', '1') === '1';
+    }
+
+    /**
+     * Whether the "start a new thread" button is offered to the user once
+     * the conversation is complete (closed). When disabled, a finished
+     * conversation stays visible read-only with no way to start a new one.
+     * Defaults to enabled.
+     *
+     * @return bool
+     */
+    public function isNewThreadButtonEnabled()
+    {
+        return $this->get_db_field('agentic_chat_show_new_thread_button', '1') === '1';
     }
 
     /**
@@ -323,6 +340,7 @@ class AgenticChatModel extends StyleModel
             'showDebug'          => $this->isDebugVisible(),
             'showPersonaStrip'   => $this->isPersonaStripVisible(),
             'showRunStatus'      => $this->isRunStatusVisible(),
+            'showNewThreadButton' => $this->isNewThreadButtonEnabled(),
             // `personas` includes the mediator (when enabled) at index 0
             // followed by the resolved persona list in order, so the chat
             // UI can look any speaker up by key in a single array.

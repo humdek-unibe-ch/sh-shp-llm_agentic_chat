@@ -99,6 +99,10 @@ class AgenticChatThreadService
      * Return the most recent non-completed thread for the user/section, or
      * null if none.
      *
+     * Used by the WRITE paths (start / stream / reset / speech) to find the
+     * thread the next run should target. Completed threads are excluded so a
+     * finished conversation is never reused for a new run.
+     *
      * @param int $userId
      * @param int $sectionId
      * @return array|null
@@ -112,6 +116,38 @@ class AgenticChatThreadService
               WHERE t.id_users = :id_users
                 AND t.id_sections = :id_sections
                 AND t.is_completed = 0
+                AND c.deleted = 0
+           ORDER BY t.id DESC
+              LIMIT 1",
+            [
+                'id_users' => $userId,
+                'id_sections' => $sectionId,
+            ]
+        );
+        return $row ?: null;
+    }
+
+    /**
+     * Return the most recent thread for the user/section, INCLUDING completed
+     * ones, or null if none.
+     *
+     * Used by the READ/VIEW path so a completed (closed) conversation stays
+     * visible after a page reload: the user can still read the full history
+     * even though they can no longer reply. Writers keep using
+     * `getActiveThreadForUser()` so a finished thread is never reused.
+     *
+     * @param int $userId
+     * @param int $sectionId
+     * @return array|null
+     */
+    public function getLatestThreadForUser($userId, $sectionId)
+    {
+        $row = $this->db->query_db_first(
+            "SELECT t.*, c.title AS conversation_title, c.created_at AS conversation_created_at
+               FROM agenticChatThreads t
+          INNER JOIN llmConversations c ON c.id = t.id_llmConversations
+              WHERE t.id_users = :id_users
+                AND t.id_sections = :id_sections
                 AND c.deleted = 0
            ORDER BY t.id DESC
               LIMIT 1",
