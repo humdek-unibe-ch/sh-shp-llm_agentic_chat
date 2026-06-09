@@ -4,6 +4,45 @@ All notable changes to the **sh-shp-llm_agentic_chat** plugin are documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Ordered, flexible personas replace the fixed teacher-slot model.** The
+  backend's `/reflect/configure` now takes
+  `{ thread_id, module_content, personas: [{ name, description }],
+  use_group_chat_mediator }`. Personas are an ordered library — each with a
+  `name` + `description` (system prompt), `color`, `avatar`, `enabled` — and
+  sections pick/order a subset via `agentic_chat_personas_to_use`. The fixed
+  `foundational` / `inclusive` / `inquiry` `slot_type` model, the
+  `AGENTIC_CHAT_PERSONA_SLOT_TYPES` / `AGENTIC_CHAT_BACKEND_SLOTS` constants,
+  and the `agenticChatPersonaRole` lookup are gone.
+- **Per-section group-chat mediator toggle.** A new
+  `agentic_chat_use_group_chat_mediator` checkbox (default on) controls
+  whether the backend builds a mediator. Persisted per thread so attribution
+  survives a restart-config change.
+- **Participant map persisted per thread.** Configure stores
+  `{ mediator, persona_1, … } → persona key` on `agenticChatThreads` so the
+  Nth `persona_<N>_teacher` executor is attributed to the right persona even
+  after a refresh.
+- **Configure once, never mid-conversation.** `/reflect/configure` runs only
+  at `start_thread` and on reset (new `thread_id`); individual runs no longer
+  reconfigure (which would clear the workflow + pending interrupts).
+- **Chat UI** separates current speaker from handoff target ("Handing off to
+  X" without switching the active speaker), adds explicit `configuring` and
+  `awaiting_input` ("Waiting for your reply") states, and the persona editor
+  supports reordering + a `description` field.
+
+### Removed
+- **`/reflect/defaults` support.** The backend has no such endpoint; the
+  `agentic_chat_defaults_path` field, the admin "fetch defaults" action/button,
+  and all related TypeScript types/UI were removed. Module text and the persona
+  library are authored entirely in the admin configuration page.
+
+### Docs
+- Rewrote `README.md` for the current backend contract and added
+  `doc/agentic-chat-flow.md` (lifecycle, backend-memory recovery policy, and a
+  manual QA checklist).
+
 ## [0.3.0] - 2026-05-28
 
 ### Fixed
