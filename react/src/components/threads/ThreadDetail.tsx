@@ -351,7 +351,6 @@ export const ThreadDetail: React.FC<ThreadDetailProps> = ({
     last_error: (tRaw.last_error as string | null) ?? null,
     persona_slot_map_json: detail.thread.persona_slot_map_json,
     pending_interrupts_json: detail.thread.pending_interrupts_json,
-    debug_meta_json: detail.thread.debug_meta_json,
     usage_total_tokens: (tRaw.usage_total_tokens as number | null) ?? null,
     usage_input_tokens: (tRaw.usage_input_tokens as number | null) ?? null,
     usage_output_tokens: (tRaw.usage_output_tokens as number | null) ?? null,
@@ -446,7 +445,13 @@ export const ThreadDetail: React.FC<ThreadDetailProps> = ({
               <>
                 <PlaygroundCard
                   title="1. POST /reflect/configure"
-                  hint="Initialise this thread (personas + module content)"
+                  hint={
+                    playground.configure.verified === true
+                      ? 'The body sent when this thread started (hash verified)'
+                      : playground.configure.verified === false
+                        ? 'Stored body does not match its hash'
+                        : 'Rebuilt from the current persona library (thread started before v1.1.0)'
+                  }
                   url={playground.configure.url}
                   body={playground.configure.body}
                   threadIdHighlight={t.agui_thread_id}
@@ -498,10 +503,7 @@ export const ThreadDetail: React.FC<ThreadDetailProps> = ({
             <pre className="agentic-threads-detail__json mb-3">{asPretty(t.persona_slot_map_json)}</pre>
 
             <h6 className="small font-weight-bold mt-3">Pending interrupts</h6>
-            <pre className="agentic-threads-detail__json mb-3">{asPretty(t.pending_interrupts_json)}</pre>
-
-            <h6 className="small font-weight-bold mt-3">Debug events</h6>
-            <pre className="agentic-threads-detail__json mb-0">{asPretty(t.debug_meta_json)}</pre>
+            <pre className="agentic-threads-detail__json mb-0">{asPretty(t.pending_interrupts_json)}</pre>
           </div>
         )}
 
