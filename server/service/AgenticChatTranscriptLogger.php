@@ -51,14 +51,6 @@ class AgenticChatTranscriptLogger
     }
 
     /**
-     * @return string Absolute path to the active log file.
-     */
-    public function getLogFile()
-    {
-        return $this->logFile;
-    }
-
-    /**
      * Log a completed assistant text message.
      *
      * @param array $thread     Thread row (uses `agui_thread_id`,
