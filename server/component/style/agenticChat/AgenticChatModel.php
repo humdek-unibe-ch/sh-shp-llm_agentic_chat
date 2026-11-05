@@ -40,6 +40,12 @@ require_once __DIR__ . "/../../../service/AgenticChatService.php";
  *      Offer a "start a new thread" button once a conversation is
  *      complete. Disable to keep a finished conversation visible but
  *      locked (read-only, no new thread). Defaults to enabled.
+ *  agentic_chat_show_end_chat_button (checkbox, internal)
+ *      Offer an End chat button once the participant has replied. It
+ *      closes the thread like the case-complete marker does. Defaults
+ *      to disabled.
+ *  memory_rule_ids (select-llm-memory-rules, internal, sh-shp-llm field)
+ *      Memory rules that run when a thread ends. Empty = no memory update.
  *  enable_speech_to_text (checkbox, internal)
  *      Enable the microphone button + Whisper transcription pipeline.
  *      Field declared by `sh-shp-llm` and linked into agenticChat.
@@ -144,6 +150,27 @@ class AgenticChatModel extends StyleModel
     public function isNewThreadButtonEnabled()
     {
         return $this->get_db_field('agentic_chat_show_new_thread_button', '1') === '1';
+    }
+
+    /** @return bool Offer the End chat button once the participant has replied. */
+    public function isEndChatButtonEnabled()
+    {
+        return $this->get_db_field('agentic_chat_show_end_chat_button', '0') === '1';
+    }
+
+    /**
+     * Memory rules that run when a thread of this section ends
+     * (sh-shp-llm field `memory_rule_ids`, comma-separated rule ids).
+     *
+     * @return int[]
+     */
+    public function getMemoryRuleIds()
+    {
+        $raw = $this->get_db_field(LLM_MEMORY_FIELD_RULE_IDS, '');
+        if (empty($raw)) {
+            return [];
+        }
+        return array_values(array_filter(array_map('intval', explode(',', $raw))));
     }
 
     /**
@@ -293,9 +320,9 @@ class AgenticChatModel extends StyleModel
      * section as `module_content`.
      *
      * Resolution order (first non-empty wins):
-     *   1. Section-level `agentic_chat_context` (translatable markdown).
-     *      Mirrors the LLM plugin's `conversation_context` pattern so
-     *      authors can tailor the reflection prompt per CMS section.
+     *   1. Section-level `agentic_chat_context` (translatable `llm_prompt`
+     *      field, like the LLM plugin's `conversation_context`: sent as
+     *      written, versioned in Prompt Lab).
      *   2. Global `agentic_chat_default_module` from the admin page
      *      (`sh_module_llm_agentic_chat`), used as a shared fallback.
      *
@@ -308,11 +335,22 @@ class AgenticChatModel extends StyleModel
      */
     public function getModuleContent()
     {
-        $sectionContext = trim((string) $this->get_db_field('agentic_chat_context', ''));
+        $sectionContext = trim((string) $this->get_db_field(AGENTIC_CHAT_FIELD_CONTEXT, ''));
         if ($sectionContext !== '') {
             return $sectionContext;
         }
         return (string) $this->agenticService->getGlobalConfig()['default_module'];
+    }
+
+    /**
+     * @return int|null This section's id when getModuleContent() is its own
+     *                  `agentic_chat_context`, null when the global default is used.
+     */
+    public function getModuleSectionId()
+    {
+        return trim((string) $this->get_db_field(AGENTIC_CHAT_FIELD_CONTEXT, '')) !== ''
+            ? (int) $this->section_id
+            : null;
     }
 
     /* =========================================================================
@@ -341,6 +379,7 @@ class AgenticChatModel extends StyleModel
             'showPersonaStrip'   => $this->isPersonaStripVisible(),
             'showRunStatus'      => $this->isRunStatusVisible(),
             'showNewThreadButton' => $this->isNewThreadButtonEnabled(),
+            'showEndChatButton'  => $this->isEndChatButtonEnabled(),
             // `personas` includes the mediator (when enabled) at index 0
             // followed by the resolved persona list in order, so the chat
             // UI can look any speaker up by key in a single array.
@@ -353,7 +392,6 @@ class AgenticChatModel extends StyleModel
             'enableSpeechToText' => $this->isSpeechToTextEnabled(),
             'speechToTextModel'  => $this->getSpeechToTextModel(),
             'labels'             => $this->getLabels(),
-            'moduleContent'      => $this->getModuleContent(),
             'backendInfo'        => [
                 'baseUrl'     => $globalConfig['backend_url'],
                 'reflectPath' => $globalConfig['reflect_path'],
@@ -368,19 +406,27 @@ class AgenticChatModel extends StyleModel
      */
     private function getLabels()
     {
+        // `text` fields are stored HTML-escaped (CmsModel::secure_field_content). React
+        // prints them as text, so they are decoded here, where they leave PHP as JSON
+        // (as core InputView / SelectView do for their mobile output).
+        $text = function ($name, $default) {
+            return htmlspecialchars_decode((string) $this->get_db_field($name, $default), ENT_QUOTES | ENT_HTML401);
+        };
         return [
-            'title'             => (string) $this->get_db_field('agentic_chat_title', ''),
+            'title'             => $text('agentic_chat_title', ''),
             'description'       => (string) $this->get_db_field('agentic_chat_description', ''),
-            'placeholder'       => (string) $this->get_db_field('agentic_chat_message_placeholder', 'Type your message here...'),
-            'sendLabel'         => (string) $this->get_db_field('agentic_chat_send_label', 'Send'),
-            'startLabel'        => (string) $this->get_db_field('agentic_chat_start_label', 'Start conversation'),
-            'resetLabel'        => (string) $this->get_db_field('agentic_chat_reset_label', 'Start a new thread'),
+            'placeholder'       => $text('agentic_chat_message_placeholder', 'Type your message here...'),
+            'sendLabel'         => $text('agentic_chat_send_label', 'Send'),
+            'startLabel'        => $text('agentic_chat_start_label', 'Start conversation'),
+            'resetLabel'        => $text('agentic_chat_reset_label', 'Start a new thread'),
+            'endChatLabel'      => $text('agentic_chat_end_chat_label', 'End chat'),
+            'endChatConfirm'    => $text('agentic_chat_end_chat_confirm', 'Do you want to end this conversation? You cannot reply afterwards.'),
             'completionMessage' => (string) $this->get_db_field('agentic_chat_completion_message', ''),
-            'loadingText'       => (string) $this->get_db_field('agentic_chat_loading_text', 'Connecting to backend…'),
-            'statusIdle'        => (string) $this->get_db_field('agentic_chat_status_idle_label', 'Ready'),
-            'statusRunning'     => (string) $this->get_db_field('agentic_chat_status_running_label', 'Thinking…'),
-            'statusComplete'    => (string) $this->get_db_field('agentic_chat_status_complete_label', 'Case complete'),
-            'statusError'       => (string) $this->get_db_field('agentic_chat_status_error_label', 'Error'),
+            'loadingText'       => $text('agentic_chat_loading_text', 'Connecting to backend…'),
+            'statusIdle'        => $text('agentic_chat_status_idle_label', 'Ready'),
+            'statusRunning'     => $text('agentic_chat_status_running_label', 'Thinking…'),
+            'statusComplete'    => $text('agentic_chat_status_complete_label', 'Case complete'),
+            'statusError'       => $text('agentic_chat_status_error_label', 'Error'),
         ];
     }
 
