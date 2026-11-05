@@ -73,6 +73,20 @@ It then POSTs `/reflect/configure` with the **exact backend contract**
 }
 ```
 
+### Stored configure context
+
+The sent body is stored once (`AgenticChatConfigureContextService`, the
+sh-shp-llm request-trace pattern): `configure_recipe_json` references the
+module text as the Prompt Lab version of `agentic_chat_context`
+(`{"p": id}`, also in `id_llm_prompt_versions_module`) or chunks in
+`llmTraceChunks` (`{"c": [ids]}`, joined in order, cut like a system
+message of an sh-shp-llm request trace: long Global Values are shared
+chunks, the rest is per user), and the persona list as a shared chunk;
+`configure_hash` is the sha256 of the canonical JSON of the body. The body
+is rebuilt and checked against the hash right away; when that fails the
+whole body is stored as one per-user chunk. Storing it never blocks the
+configure call.
+
 ### Participant map
 
 At configure time the service persists a **participant map** on the thread
@@ -203,10 +217,30 @@ the user reply travels inside the resume payload, so the run body's
 
 ## 6. Complete the case
 
-When an assistant message ends with the marker **`Case complete.`**
-(`AGENTIC_CHAT_CASE_COMPLETE_MARKER`), the service marks the thread
-`completed` / `is_completed = 1`. The React chat renders the completion
-message and disables further input for that thread.
+A thread ends in one of two ways, and both run
+`AgenticChatService::closeThread()`:
+
+- an assistant message ends with the marker **`Case complete.`**
+  (`AGENTIC_CHAT_CASE_COMPLETE_MARKER`), seen by `streamRun()` on
+  `TEXT_MESSAGE_END` (`end_reason = case_complete`);
+- the participant clicks **End chat** (`end_thread` action, POST, only when
+  `agentic_chat_show_end_chat_button` is on and no run is streaming;
+  `end_reason = user_ended`). The backend has no end-thread endpoint; its
+  idle thread is simply never used again.
+
+A streaming run touches the thread (`updated_at`) at least every half
+`agentic_chat_timeout`, and cURL ends the stream when the backend sends
+nothing for a whole timeout. End chat therefore treats a thread that is
+still `running` without a touch for twice the timeout as a lost run (PHP
+crash, restart) and closes it; a live run answers 409.
+
+`closeThread()` claims `is_completed = 1` in one `UPDATE … WHERE
+is_completed = 0`, so only the first call closes the thread. It sets the
+status `completed`, clears pending interrupts and schedules the memory
+rules of `memory_rule_ids` (sh-shp-llm
+`LlmMemoryTriggerService::scheduleRuleJob()`, source `agentic_chat_end`,
+`source_ref = {section_id, conversation_id, thread_id}`). The React chat
+renders the completion message and disables further input for that thread.
 
 ---
 
@@ -216,6 +250,12 @@ message and disables further input for that thread.
 creates a **new local `agenticChatThreads` row with a new
 `agui_thread_id`**, then configures that fresh thread once. It does **not**
 reconfigure the old thread.
+
+The old thread is completed directly (`AgenticChatThreadService::resetThread()`),
+**not** through `closeThread()`: starting a new thread does **not** run the
+memory rules of `memory_rule_ids`, and it does not wait for a running reply.
+Memory runs only when a conversation ends ("Case complete." or End chat).
+This is intended for now and may change later.
 
 ### Why we never reconfigure an active thread
 
@@ -258,7 +298,7 @@ in the **backend's process memory only**. Consequences:
 | `idle`           | Configured / between turns; ready to run.                     |
 | `running`        | A `/reflect` run is streaming.                                |
 | `awaiting_input` | Run finished with an interrupt; waiting for the user's reply. |
-| `completed`      | `Case complete.` marker seen; thread closed.                  |
+| `completed`      | `Case complete.` marker seen or End chat; thread closed.      |
 | `failed`         | HTTP error or in-stream `RUN_ERROR`; see `last_error`.        |
 
 ---
@@ -325,6 +365,14 @@ against a live backend (or the admin Threads playground for payload shapes).
       pending interrupt + “Waiting for your reply” are restored.
 - [ ] **Completed case** — a `Case complete.` turn closes the thread and shows
       the completion message.
+- [ ] **End chat** — with `agentic_chat_show_end_chat_button` on, the button
+      appears after the first reply, asks for confirmation, and closes the
+      thread read-only.
+- [ ] **Memory on end** — with rules in `memory_rule_ids`, both
+      endings create one "LLM Memory Update (agentic chat section …)" job;
+      the section is listed in LLM Memory > Sources (Section, agenticChat).
+- [ ] **Configure body** — the Threads viewer says "hash verified" for a new
+      thread and shows the personas that were sent.
 - [ ] **Handoff display** — during a `handoff_to_<x>` tool call the badge reads
       “Handing off to X” and the persona strip dashes/arrows the target, while
       the previous speaker stays active until X starts.
