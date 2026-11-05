@@ -19,6 +19,7 @@ require_once __DIR__ . "/../../../../../sh-shp-llm/server/service/LlmSpeechToTex
  *   POST  action=start_thread       section_id=...
  *   POST  action=stream_run         section_id=...    (returns text/event-stream)
  *   POST  action=reset_thread       section_id=...
+ *   POST  action=end_thread         section_id=...    (End chat button)
  *   POST  action=speech_transcribe  section_id=...    (multipart/form-data with `audio`)
  *
  * Section-id validation mirrors LlmChatController so multiple instances of
@@ -138,6 +139,9 @@ class AgenticChatController extends BaseController
                 case 'reset_thread':
                     $this->actionResetThread($userId);
                     break;
+                case 'end_thread':
+                    $this->actionEndThread($userId);
+                    break;
                 case 'speech_transcribe':
                     $this->actionSpeechTranscribe($userId);
                     break;
@@ -196,7 +200,13 @@ class AgenticChatController extends BaseController
         $personas = $this->model->getResolvedPersonas();
         $useMediator = $this->model->isGroupChatMediatorEnabled();
         $moduleContent = $this->model->getModuleContent();
-        $result = $this->service->configureThread($thread, $personas, $useMediator, $moduleContent);
+        $result = $this->service->configureThread(
+            $thread,
+            $personas,
+            $useMediator,
+            $moduleContent,
+            $this->model->getModuleSectionId()
+        );
 
         $thread = $this->service->getThreadService()->getThreadById($thread['id']);
 
@@ -243,7 +253,15 @@ class AgenticChatController extends BaseController
     private function actionStreamRun($userId)
     {
         $sectionId = $this->model->getSectionId();
-        $thread = $this->service->getOrCreateThread($userId, $sectionId);
+        // A run never creates a thread: only start_thread / reset_thread
+        // configure one, and an unconfigured thread fails in the backend.
+        // No active thread = the conversation was closed (e.g. End chat in
+        // another tab).
+        $thread = $this->service->getThreadService()->getActiveThreadForUser($userId, $sectionId);
+        if ($thread === null) {
+            $this->sendJsonResponse(['error' => 'This conversation has ended. Start a new thread to continue.'], 409);
+            return;
+        }
 
         // DO NOT reconfigure the backend thread here.
         //
@@ -277,6 +295,12 @@ class AgenticChatController extends BaseController
         }
 
         $message = isset($_POST['message']) ? (string) $_POST['message'] : null;
+        // every run carries text (a reply, or the kickoff token); the chat
+        // blocks blank input, this keeps a direct request from starting a run
+        if (trim((string) $message) === '') {
+            $this->sendJsonResponse(['error' => 'Please type a message.'], 400);
+            return;
+        }
         $resumeRaw = $_POST['resume'] ?? null;
         $resumeStrict = null;
         if (is_string($resumeRaw) && $resumeRaw !== '') {
@@ -311,6 +335,10 @@ class AgenticChatController extends BaseController
             }
         }
 
+        // A closed tab must not stop the script half way: the run still has to
+        // store its status and, after "Case complete.", close the thread and
+        // schedule its memory. forwardEvent() stops reading the backend then.
+        ignore_user_abort(true);
         $this->startSseStream();
 
         $this->sendSseEvent([
@@ -334,7 +362,14 @@ class AgenticChatController extends BaseController
             return null;
         };
 
-        $result = $this->service->streamRun($thread, $message, $legacyResume, $forwardEvent, $slotMap);
+        $result = $this->service->streamRun(
+            $thread,
+            $message,
+            $legacyResume,
+            $forwardEvent,
+            $slotMap,
+            $this->model->getMemoryRuleIds()
+        );
 
         if (!$result['ok']) {
             $this->sendSseEvent([
@@ -361,6 +396,38 @@ class AgenticChatController extends BaseController
             'ok' => true,
             'thread' => $this->presentThread($newThread, $userId),
         ]);
+    }
+
+    /**
+     * End the active thread (End chat button). Runs the same
+     * AgenticChatService::closeThread() as a backend "Case complete.": the
+     * thread becomes read-only and the section's memory rules run. A thread
+     * that is already closed is returned as it is.
+     */
+    private function actionEndThread($userId)
+    {
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            $this->sendJsonResponse(['error' => 'Method not allowed'], 405);
+            return;
+        }
+        if (!$this->model->isEndChatButtonEnabled()) {
+            $this->sendJsonResponse(['error' => 'End chat is not enabled for this chat.'], 403);
+            return;
+        }
+
+        $threadService = $this->service->getThreadService();
+        $thread = $threadService->getActiveThreadForUser($userId, $this->model->getSectionId());
+        if ($thread) {
+            // a live run still writes its reply and status; End chat waits for
+            // it. A run lost to a crash no longer blocks End chat.
+            if ($threadService->isRunInProgress($thread, $this->service->getGlobalConfig()['timeout'])) {
+                $this->sendJsonResponse(['error' => 'Please wait until the reply is finished.'], 409);
+                return;
+            }
+            $this->service->closeThread($thread, AGENTIC_CHAT_END_REASON_USER_ENDED, $this->model->getMemoryRuleIds());
+        }
+
+        $this->sendJsonResponse(['ok' => true, 'thread' => $this->getThreadView($userId)]);
     }
 
     /**
@@ -562,7 +629,6 @@ class AgenticChatController extends BaseController
                 'personaSlotMap'    => is_array($slotMap) ? $slotMap : new stdClass(),
                 'useGroupChatMediator' => !isset($thread['use_group_chat_mediator'])
                     || (int) $thread['use_group_chat_mediator'] === 1,
-                'moduleContent'     => $thread['module_content'] ?? null,
                 'pendingInterrupts' => $pendingInterrupts,
                 'awaitingInput'     => !empty($pendingInterrupts),
                 'usage'             => [
