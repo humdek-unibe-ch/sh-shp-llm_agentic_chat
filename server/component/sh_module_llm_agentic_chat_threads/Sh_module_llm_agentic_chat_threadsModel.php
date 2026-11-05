@@ -11,20 +11,16 @@ require_once __DIR__ . "/../../service/AgenticChatService.php";
  *
  * Exposes a paginated, filterable list of agenticChatThreads rows along
  * with the linked llmConversations/llmMessages payload so admins can
- * inspect AG-UI thread state and recent debug events.
+ * inspect AG-UI thread state.
  */
 class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
 {
-    /** @var int|null Page id of the threads admin page. */
-    private $pageId;
-
     /** @var AgenticChatService|null Lazy orchestrator for global config + payload helpers. */
     private $agenticService;
 
     public function __construct($services)
     {
         parent::__construct($services);
-        $this->pageId = $this->db->fetch_page_id_by_keyword(PAGE_LLM_AGENTIC_CHAT_THREADS);
     }
 
     /**
@@ -41,14 +37,6 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
             $this->agenticService = new AgenticChatService($this->services);
         }
         return $this->agenticService;
-    }
-
-    /**
-     * @return int|null Page id of the threads admin page.
-     */
-    public function getPageId()
-    {
-        return $this->pageId;
     }
 
     /**
@@ -200,7 +188,6 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
         // Decode JSON columns defensively.
         $row['persona_slot_map_json'] = $this->decodeJson($row['persona_slot_map'] ?? null);
         $row['pending_interrupts_json'] = $this->decodeJson($row['pending_interrupts'] ?? null);
-        $row['debug_meta_json'] = $this->decodeJson($row['debug_meta'] ?? null);
 
         // Resolve a friendly author label per message so the viewer shows
         // the persona who actually spoke ("Mediator", "Lea", …) instead of
@@ -374,10 +361,10 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
             ? $thread['persona_slot_map_json']
             : [];
 
-        // Same for module content - the row column captures what was sent.
-        $moduleContent = (string) ($thread['module_content']
-            ?? $cfg['default_module']
-            ?? '');
+        // The stored configure context holds what was sent; threads from
+        // before v1.1.0 only stored their module text.
+        $stored = $this->getAgenticService()->getConfigureContext()->rebuild($thread);
+        $moduleContent = (string) ($stored['module'] ?? $cfg['default_module'] ?? '');
 
         // The thread froze its mediator choice at configure time.
         $useMediator = !isset($thread['use_group_chat_mediator'])
@@ -390,21 +377,22 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
         $configurePath = (string) $cfg['configure_path'];
         $reflectPath = (string) $cfg['reflect_path'];
 
-        // Rebuild the ordered persona list from the participant map +
-        // the global library, so the configure body matches the backend
-        // contract ({ thread_id, module_content, personas:[{name,
-        // description}], use_group_chat_mediator }).
-        $orderedPersonas = $this->orderedPersonasFromParticipantMap(
-            $participantMap,
-            is_array($cfg['personas'] ?? null) ? $cfg['personas'] : []
-        );
-
-        $configureBody = $personaService->buildConfigurePayload(
-            $orderedPersonas,
-            $moduleContent,
-            $threadId,
-            $useMediator
-        );
+        if ($stored['body'] !== null) {
+            $configureBody = $stored['body'];
+        } else {
+            // Before v1.1.0 the personas were not stored: rebuild the
+            // ordered list from the participant map + the CURRENT library.
+            $orderedPersonas = $this->orderedPersonasFromParticipantMap(
+                $participantMap,
+                is_array($cfg['personas'] ?? null) ? $cfg['personas'] : []
+            );
+            $configureBody = $personaService->buildConfigurePayload(
+                $orderedPersonas,
+                $moduleContent,
+                $threadId,
+                $useMediator
+            );
+        }
 
         // Most recent USER message is the natural "send this again" example
         // we surface in the Debug tab. Per-message buttons populate
@@ -450,6 +438,9 @@ class Sh_module_llm_agentic_chat_threadsModel extends BaseModel
                 'method' => 'POST',
                 'url' => $backendUrl . $configurePath,
                 'body' => $configureBody,
+                // true: the stored body matches configure_hash; false: it does
+                // not; null: no stored body (rebuilt from the current library)
+                'verified' => $stored['verified'],
             ],
             'run' => [
                 'method' => 'POST',
