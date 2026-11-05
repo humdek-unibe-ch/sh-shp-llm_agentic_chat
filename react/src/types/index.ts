@@ -48,6 +48,8 @@ export interface AgenticChatLabels {
   sendLabel: string;
   startLabel: string;
   resetLabel: string;
+  endChatLabel: string;
+  endChatConfirm: string;
   completionMessage: string;
   loadingText: string;
   statusIdle: string;
@@ -74,6 +76,8 @@ export interface AgenticChatConfig {
    * read-only (no new thread can be started). Button label = resetLabel.
    */
   showNewThreadButton: boolean;
+  /** Offer an End chat button once the participant has replied (closes the thread, runs memory). */
+  showEndChatButton: boolean;
   /**
    * Resolved, ordered persona list for this section — the mediator
    * (when enabled) at index 0 followed by the personas chosen for this
@@ -101,8 +105,6 @@ export interface AgenticChatConfig {
   /** Whisper model identifier sent with each transcription request. */
   speechToTextModel: string;
   labels: AgenticChatLabels;
-  /** Module / reflection text injected into every AG-UI thread. */
-  moduleContent: string;
   backendInfo: BackendInfo;
 }
 
@@ -132,7 +134,6 @@ export interface ThreadInfo {
   personaSlotMap: PersonaSlotMap | Record<string, never>;
   /** Whether this thread was configured with the group-chat mediator. */
   useGroupChatMediator: boolean;
-  moduleContent: string | null;
   /**
    * AG-UI interrupts persisted on the thread row.
    *
@@ -457,6 +458,8 @@ export interface ThreadPlaygroundPayloads {
     url: string;
     /** Body sent to /reflect/configure (snapshot of the thread's init). */
     body: Record<string, unknown>;
+    /** true: stored body matches its hash; false: it does not; null: rebuilt from the current library. */
+    verified: boolean | null;
   };
   run: {
     method: 'POST';
@@ -482,7 +485,6 @@ export interface ThreadDetail {
     is_completed: 0 | 1 | boolean;
     persona_slot_map_json: Record<string, unknown> | null;
     pending_interrupts_json: Record<string, unknown> | unknown[] | null;
-    debug_meta_json: Record<string, unknown> | null;
   };
   messages: ThreadDetailMessage[];
   playground?: ThreadPlaygroundPayloads;

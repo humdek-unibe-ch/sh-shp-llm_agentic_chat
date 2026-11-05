@@ -78,6 +78,8 @@ export interface ChatApi {
   getThread(): Promise<ApiResult<{ ok: boolean; thread: ThreadView }>>;
   startThread(payload?: Record<string, unknown>): Promise<ApiResult<{ ok: boolean; thread: ThreadView }>>;
   resetThread(): Promise<ApiResult<{ ok: boolean; thread: ThreadView }>>;
+  /** End chat: close the active thread (read-only) and run the memory rules. */
+  endThread(): Promise<ApiResult<{ ok: boolean; thread: ThreadView }>>;
   buildStreamUrl(): string;
 }
 
@@ -103,6 +105,12 @@ export function createChatApi(controllerUrl: string, sectionId: number): ChatApi
     resetThread: () => {
       const body = new URLSearchParams();
       body.set('action', 'reset_thread');
+      body.set('section_id', String(sectionId));
+      return request(controllerUrl, { method: 'POST', body });
+    },
+    endThread: () => {
+      const body = new URLSearchParams();
+      body.set('action', 'end_thread');
       body.set('section_id', String(sectionId));
       return request(controllerUrl, { method: 'POST', body });
     },
