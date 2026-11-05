@@ -51,7 +51,7 @@ class AgenticChatThreadService
         try {
             $conversationId = $this->createConversationRow($userId, $sectionId);
 
-            $this->db->insert('agenticChatThreads', [
+            $threadId = $this->db->insert('agenticChatThreads', [
                 'id_llmConversations' => $conversationId,
                 'id_users' => $userId,
                 'id_sections' => $sectionId,
@@ -61,7 +61,7 @@ class AgenticChatThreadService
                 'is_completed' => 0,
             ]);
 
-            $this->logTransaction('insert', $conversationId, $userId,
+            $this->logTransaction(transactionTypes_insert, $threadId, $userId,
                 "Created agenticChat thread {$aguiThreadId}");
 
             $this->db->commit();
@@ -224,7 +224,9 @@ class AgenticChatThreadService
         $allowed = [
             'last_run_id',
             'persona_slot_map',
-            'module_content',
+            'configure_recipe_json',
+            'configure_hash',
+            'id_llm_prompt_versions_module',
             'use_group_chat_mediator',
             'pending_interrupts',
             'id_status',
@@ -233,13 +235,50 @@ class AgenticChatThreadService
             'usage_total_tokens',
             'usage_input_tokens',
             'usage_output_tokens',
-            'debug_meta',
         ];
         $clean = array_intersect_key($fields, array_flip($allowed));
         if (empty($clean)) {
             return;
         }
         $this->db->update_by_ids('agenticChatThreads', $clean, ['id' => $threadId]);
+    }
+
+    /**
+     * Mark a streaming run as alive (heartbeat): sets updated_at, which a
+     * plain updateThread() only changes when a value changes.
+     *
+     * @param int $threadId
+     * @return void
+     */
+    public function touchThread($threadId)
+    {
+        $this->db->execute_update_db(
+            'UPDATE agenticChatThreads SET updated_at = NOW() WHERE id = :id',
+            [':id' => (int) $threadId]
+        );
+    }
+
+    /**
+     * Whether a thread's run is still streaming. A run touches the thread at
+     * least every half backend timeout while events arrive, and the stream
+     * ends when the backend is silent for a whole timeout
+     * (AgenticChatBackendClient::streamRun()). A thread still "running" after
+     * twice the timeout without a touch lost its run (PHP crash, restart).
+     *
+     * @param array $thread         Thread row with its status code.
+     * @param int   $timeoutSeconds Backend timeout (agentic_chat_timeout).
+     * @return bool
+     */
+    public function isRunInProgress(array $thread, $timeoutSeconds)
+    {
+        if (($thread['status'] ?? '') !== AGENTIC_CHAT_STATUS_RUNNING) {
+            return false;
+        }
+        $row = $this->db->query_db_first(
+            'SELECT TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS idle_seconds FROM agenticChatThreads WHERE id = :id',
+            [':id' => (int) $thread['id']]
+        );
+        return $row && (int) $row['idle_seconds'] <= 2 * (int) $timeoutSeconds;
     }
 
     /**
@@ -295,40 +334,6 @@ class AgenticChatThreadService
     }
 
     /**
-     * Append a debug event to the thread's debug_meta bag (best effort).
-     *
-     * @param int   $threadId
-     * @param array $event
-     * @return void
-     */
-    public function appendDebugEvent($threadId, array $event)
-    {
-        $thread = $this->getThreadById($threadId);
-        if (!$thread) {
-            return;
-        }
-
-        $existing = !empty($thread['debug_meta']) ? json_decode((string) $thread['debug_meta'], true) : null;
-        if (!is_array($existing)) {
-            $existing = ['events' => []];
-        }
-        if (!isset($existing['events']) || !is_array($existing['events'])) {
-            $existing['events'] = [];
-        }
-
-        $existing['events'][] = $event;
-        // Keep the bag small.
-        $serialized = json_encode($existing);
-        while ($serialized !== false && strlen($serialized) > AGENTIC_CHAT_MAX_DEBUG_EVENTS_BYTES
-               && count($existing['events']) > 1) {
-            array_shift($existing['events']);
-            $serialized = json_encode($existing);
-        }
-
-        $this->updateThread($threadId, ['debug_meta' => $serialized]);
-    }
-
-    /**
      * Ensure a llmConversations row exists for the given user/section so
      * the foreign key in agenticChatThreads can be satisfied.
      *
@@ -351,8 +356,8 @@ class AgenticChatThreadService
     /**
      * Audit-log helper. Mirrors how sh-shp-llm logs transactions.
      *
-     * @param string $type 'insert' / 'update' / 'delete'
-     * @param int    $targetId Affected row id.
+     * @param string $type transactionTypes_* (e.g. transactionTypes_insert)
+     * @param int    $targetId Affected agenticChatThreads row id.
      * @param int    $userId
      * @param string $description
      * @return void
@@ -360,13 +365,8 @@ class AgenticChatThreadService
     private function logTransaction($type, $targetId, $userId, $description)
     {
         try {
-            $transaction = $this->services->get_transaction();
-            // Defensive: not all SelfHelp builds expose the helper signatures
-            // identically, so we degrade gracefully.
-            if (method_exists($transaction, 'add_transaction')) {
-                $transaction->add_transaction($type, 'agenticChatThreads', $targetId, $userId,
-                    $description, TRANSACTION_BY_LLM_AGENTIC_CHAT);
-            }
+            $this->services->get_transaction()->add_transaction($type, TRANSACTION_BY_LLM_AGENTIC_CHAT,
+                $userId, 'agenticChatThreads', $targetId, false, $description);
         } catch (Throwable $e) {
             // Audit logging must never block the operation.
         }
