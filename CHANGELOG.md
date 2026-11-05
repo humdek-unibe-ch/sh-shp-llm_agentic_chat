@@ -4,7 +4,7 @@ All notable changes to the **sh-shp-llm_agentic_chat** plugin are documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] (work in progress)
+## [1.1.0]
 
 **Memory when a conversation ends, an End chat button, and the configure
 context stored once.**
