@@ -22,16 +22,15 @@ require_once __DIR__ . "/../service/AgenticChatService.php";
  *      sh_module_llm_agentic_chat page.
  *
  *  - field-agentic-chat-personas-select-edit / -view
- *      Render a Bootstrap multi-select for the section-level field
- *      `agentic_chat_personas_to_use`. The dropdown is populated with
- *      every persona defined on the global plugin admin page so editors
- *      can pick which personas take part in the section's chat.
+ *      Append a core `select` (multiple) to the section-level field
+ *      `agentic_chat_personas_to_use`, listing every persona defined on
+ *      the global plugin admin page (like sh-shp-llm's memory-rule picker).
  *
- * All three hooks render through the core `template` style (which
- * `include`s a PHP file directly) instead of the `rawText` style — the
- * latter HTML-escapes its `text` payload regardless of the `is_html`
- * flag, which would print our markup as literal text inside the form.
- * Templates live in `server/component/tpl/`.
+ * The persona editor and the panel render through the core `template`
+ * style (which `include`s a PHP file directly) instead of the `rawText`
+ * style — the latter HTML-escapes its `text` payload regardless of the
+ * `is_html` flag, which would print our markup as literal text inside the
+ * form. Templates live in `server/component/tpl/`.
  *
  * @package LLM Agentic Chat Plugin
  */
@@ -204,17 +203,12 @@ class AgenticChatHooks extends BaseHooks
     }
 
     /**
-     * Render the section-level "personas to use" multi-select dropdown.
-     *
-     * Storage strategy: the field is stored in
-     * `sections_fields_translation.content` as a CSV string of persona
-     * keys (e.g. `ms_rivera,mr_okafor,ms_chen`). The `<select multiple>`
-     * naturally posts each selected option as
-     * `fields[name][lang][gender][content][]` and CmsUpdateController
-     * implodes that array with commas before persisting (see core
-     * `if(is_array($content)){ $content = implode(',', $content); }` in
-     * `update()`). The matching reader, `normalizeStoredKeys()`, also
-     * supports JSON-array inputs for legacy/back-compat.
+     * Render the section-level "personas to use" multi-select with the core
+     * `select` style, the same way sh-shp-llm renders its memory-rule picker:
+     * the CMS renders the field (label, help, hidden id/type/relation
+     * inputs) and the select is appended to it. The selected keys are
+     * posted as an array and stored comma-separated by CmsUpdateController.
+     * Disabled personas stay listed so a saved key is not lost.
      *
      * @param object $args     Hook params.
      * @param int    $disabled 0 = edit mode, 1 = view mode (read-only).
@@ -222,142 +216,49 @@ class AgenticChatHooks extends BaseHooks
      */
     private function renderPersonasSelectField($args, $disabled)
     {
-        $field = $this->safeGetParam($args, 'field', null);
-        $original = $this->safeExecutePrivate($args);
+        $field = $this->get_param_by_name($args, 'field');
+        $res = $this->execute_private_method($args);
 
-        if (!is_array($field) || ($field['name'] ?? '') !== 'agentic_chat_personas_to_use') {
-            return $original;
+        if (($field['name'] ?? '') !== 'agentic_chat_personas_to_use' || !$res) {
+            return $res;
         }
 
-        return $this->buildPersonaPickerWidget($field, (int) $disabled);
-    }
-
-    /**
-     * Build the persona picker widget (a `<select multiple>` plus the
-     * bookkeeping hidden inputs the CMS save handler expects).
-     *
-     * The CMS form processor (`CmsUpdateController::update()`) reads
-     * `$field['type']`, `$field['id']` and `$field['relation']` for every
-     * submitted entry, so any hook that completely replaces the default
-     * field renderer must keep emitting those hidden inputs alongside the
-     * `[content]` value(s). Without them the save fails with
-     * "Undefined array key 'type'".
-     *
-     * Rendered through the `template` style so the markup is included
-     * verbatim (no HTML escaping). The select is upgraded to a Bootstrap
-     * dropdown by the existing `selectpicker` JS that ships with the CMS.
-     *
-     * @param array $field    Hook field descriptor (id, type, relation, content, …).
-     * @param int   $disabled 0 = edit, 1 = view (read-only).
-     * @return BaseStyleComponent
-     */
-    private function buildPersonaPickerWidget(array $field, $disabled)
-    {
-        $idLanguage = $field['id_language'] ?? 1;
-        $idGender   = $field['id_gender']   ?? 1;
-        $namePrefix = "fields[" . $field['name'] . "][" . $idLanguage . "][" . $idGender . "]";
-        $contentName = $namePrefix . "[content]";
-
-        $selectedKeys = $this->normalizeStoredKeys((string) ($field['content'] ?? ''));
-        $optionsHtml  = $this->renderPersonaOptionsHtml($selectedKeys);
-        $domId        = 'agc-personas-' . substr(md5($contentName), 0, 8);
-
-        return new BaseStyleComponent("template", array(
-            "path"  => __DIR__ . "/tpl/tpl_personas_select.php",
-            "items" => array(
-                "inputName"     => htmlspecialchars($contentName,  ENT_QUOTES | ENT_HTML5, 'UTF-8'),
-                "namePrefix"    => htmlspecialchars($namePrefix,   ENT_QUOTES | ENT_HTML5, 'UTF-8'),
-                "fieldId"       => (int) ($field['id'] ?? 0),
-                "fieldType"     => htmlspecialchars((string) ($field['type']     ?? 'agentic-chat-personas-select'), ENT_QUOTES | ENT_HTML5, 'UTF-8'),
-                "fieldRelation" => htmlspecialchars((string) ($field['relation'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'),
-                "optionsHtml"   => $optionsHtml,
-                "domId"         => htmlspecialchars($domId,        ENT_QUOTES | ENT_HTML5, 'UTF-8'),
-                "disabled"      => (bool) $disabled,
-            ),
-        ));
-    }
-
-    /**
-     * Build the inner `<option>` markup for the persona <select>.
-     *
-     * @param array<int, string> $selectedKeys Currently-selected persona keys.
-     * @return string Concatenated <option> HTML.
-     */
-    private function renderPersonaOptionsHtml(array $selectedKeys)
-    {
+        $items = array();
         try {
-            $service = new AgenticChatService($this->services);
-            $config = $service->getGlobalConfig();
-            $personas = is_array($config['personas'] ?? null) ? $config['personas'] : [];
+            $personas = (new AgenticChatService($this->services))->getGlobalConfig()['personas'];
         } catch (Throwable $e) {
-            error_log('[AgenticChatHooks::renderPersonaOptionsHtml] ' . $e->getMessage());
-            return '<option value="">Error loading personas: '
-                . htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8')
-                . '</option>';
+            // this hook runs on every CMS field render: never break the edit page
+            error_log('[AgenticChatHooks::renderPersonasSelectField] personas not loaded: ' . get_class($e));
+            return $res;
         }
-
-        if (empty($personas)) {
-            return '<option value="" disabled>No personas defined yet — add some on the admin page first.</option>';
-        }
-
-        $selectedFlip = array_flip($selectedKeys);
-        $html = '';
         foreach ($personas as $persona) {
             $key = (string) ($persona['key'] ?? '');
             $name = (string) ($persona['name'] ?? '');
             if ($key === '' || $name === '') {
                 continue;
             }
-            $label = $name;
-            if (empty($persona['enabled'])) {
-                $label .= ' — disabled';
-            }
-            $isSelected = isset($selectedFlip[$key]) ? ' selected' : '';
-            $html .= sprintf(
-                '<option value="%s"%s>%s</option>',
-                htmlspecialchars($key, ENT_QUOTES | ENT_HTML5, 'UTF-8'),
-                $isSelected,
-                htmlspecialchars($label, ENT_QUOTES | ENT_HTML5, 'UTF-8')
+            $items[] = array(
+                "value" => $key,
+                "text" => $name . (!empty($persona['enabled']) ? '' : ' (disabled)')
             );
         }
 
-        return $html;
-    }
+        $field_name_prefix = "fields[" . $field['name'] . "][" . $field['id_language'] . "]" . "[" . $field['id_gender'] . "]";
+        $children = $res->get_view()->get_children();
+        $children[] = new BaseStyleComponent("select", array(
+            // an empty value must stay [''] (not []): the select view only defines "selected" inside its value loop
+            "value" => array_map('trim', explode(',', (string) ($field['content'] ?? ''))),
+            "name" => $field_name_prefix . "[content]",
+            "max" => 10,
+            "live_search" => 1,
+            "is_multiple" => 1,
+            "is_required" => 0,
+            "disabled" => (int) $disabled,
+            "items" => $items
+        ));
+        $res->get_view()->set_children($children);
 
-    /**
-     * Normalise the raw stored value into a deduplicated array of
-     * persona keys. Accepts JSON arrays (canonical), CSV strings (legacy
-     * fallback), or empty values.
-     *
-     * @param string $raw Raw field content from the database.
-     * @return array<int, string>
-     */
-    private function normalizeStoredKeys($raw)
-    {
-        $raw = trim((string) $raw);
-        if ($raw === '') {
-            return [];
-        }
-
-        $decoded = json_decode($raw, true);
-        if (is_array($decoded)) {
-            $keys = [];
-            foreach ($decoded as $value) {
-                if (!is_scalar($value)) {
-                    continue;
-                }
-                $key = trim((string) $value);
-                if ($key !== '' && !in_array($key, $keys, true)) {
-                    $keys[] = $key;
-                }
-            }
-            return $keys;
-        }
-
-        return array_values(array_unique(array_filter(
-            array_map('trim', explode(',', $raw)),
-            static function ($v) { return $v !== ''; }
-        )));
+        return $res;
     }
 
     /**

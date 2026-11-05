@@ -159,26 +159,6 @@ class AgenticChatPersonaService
     }
 
     /**
-     * Convenience lookup for a persona by its key.
-     *
-     * @param array  $personas
-     * @param string $key
-     * @return array|null
-     */
-    public function findByKey(array $personas, $key)
-    {
-        if (!is_string($key) || $key === '') {
-            return null;
-        }
-        foreach ($personas as $persona) {
-            if (isset($persona['key']) && $persona['key'] === $key) {
-                return $persona;
-            }
-        }
-        return null;
-    }
-
-    /**
      * Resolve the ordered list of personas a section will actually use.
      *
      *   1. If the section curated a set of persona keys
