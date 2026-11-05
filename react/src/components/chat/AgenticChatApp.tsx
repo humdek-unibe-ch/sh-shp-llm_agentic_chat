@@ -24,6 +24,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgenticChatConfig, AgUiEvent, PendingInterrupt, ResumeEntry } from '../../types';
 import { createChatApi } from '../../utils/api';
 import { isCaseCompleteText } from '../../utils/ag-ui-events';
+import { showConfirm } from '../../utils/confirm';
 import { useAgenticThread } from '../../hooks/useAgenticThread';
 import { useAgUiStream } from '../../hooks/useAgUiStream';
 import { useMessages } from '../../hooks/useMessages';
@@ -32,6 +33,13 @@ import { useRunStatus } from '../../hooks/useRunStatus';
 import { ChatShell } from './ChatShell';
 
 const MAX_DEBUG_EVENTS = 200;
+
+/** Escape plain text for the HTML content of the jquery-confirm dialog. */
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string
+  ));
+}
 
 export interface AgenticChatAppProps {
   config: AgenticChatConfig;
@@ -146,17 +154,40 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
       runStatus.markError(result.error);
       return;
     }
+    // Show the fresh thread (the reset response carries it) BEFORE clearing
+    // the local state: cleared state next to the old server messages made
+    // the sync effect copy the old conversation back, and its
+    // "Case complete." locked the new thread.
+    thread.setThread(result.data.thread);
     messagesHook.clear();
     interrupts.clear();
     runStatus.reset();
     setAutoStartFired(false);
     lastSyncedMessagesRef.current = '';
     lastSyncedInterruptsRef.current = '';
-    // Sync silently: the UI is already cleared above, so a full-screen
-    // spinner here would be a needless flash before the fresh thread
-    // (auto-)starts.
-    await thread.refresh({ silent: true });
   }, [api, interrupts, messagesHook, runStatus, stream, thread]);
+
+  /**
+   * End chat: after a confirmation the server closes the thread exactly
+   * like a backend "Case complete." (read-only, memory rules run), and the
+   * chat shows the completion notice.
+   */
+  const endThread = useCallback(async () => {
+    // the dialog renders HTML; the labels are plain text
+    const confirmed = await showConfirm({
+      title: escapeHtml(config.labels.endChatLabel),
+      message: escapeHtml(config.labels.endChatConfirm),
+      confirmLabel: escapeHtml(config.labels.endChatLabel),
+    });
+    if (!confirmed) return;
+    const result = await api.endThread();
+    if (!result.ok) {
+      runStatus.markError(result.error);
+      return;
+    }
+    thread.setThread(result.data.thread);
+    runStatus.markComplete();
+  }, [api, config.labels, runStatus, thread]);
 
   /**
    * Send a user message.
@@ -250,6 +281,12 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
   // finished conversation can be locked read-only when desired.
   const showReset =
     config.showNewThreadButton && (messagesHook.messages.length > 0 || caseClosed);
+  // End chat only once the participant has replied: before that there is
+  // no conversation to remember.
+  const hasUserReply = messagesHook.messages.some(
+    (m) => m.role === 'user' && m.content.trim() !== '' && m.content.trim() !== config.autoStartToken
+  );
+  const showEnd = config.showEndChatButton && !caseClosed && hasUserReply;
 
   return (
     <ChatShell
@@ -266,6 +303,7 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
       errorMessage={runStatus.error || thread.error}
       showStart={showStart}
       showReset={showReset}
+      showEnd={showEnd}
       showPersonaStrip={config.showPersonaStrip}
       showRunStatus={config.showRunStatus}
       showDebug={config.showDebug}
@@ -279,6 +317,7 @@ export const AgenticChatApp: React.FC<AgenticChatAppProps> = ({ config }) => {
       onSend={(text) => void sendMessage(text)}
       onStart={() => void startThread()}
       onReset={() => void resetThread()}
+      onEnd={() => void endThread()}
     />
   );
 };
