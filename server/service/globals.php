@@ -23,7 +23,7 @@
 
 define('LLM_AGENTIC_CHAT_PLUGIN_NAME', 'sh-shp-llm_agentic_chat');
 define('LLM_AGENTIC_CHAT_PLUGIN_DB_NAME', 'llm_agentic_chat');
-define('LLM_AGENTIC_CHAT_PLUGIN_VERSION', 'v1.0.0');
+define('LLM_AGENTIC_CHAT_PLUGIN_VERSION', 'v1.1.0');
 
 /* =========================================================================
  * ADMIN PAGE ROUTING
@@ -60,6 +60,24 @@ define('AGENTIC_CHAT_AUTO_START_TOKEN', '__auto_start__');
  * this string as the conversation being finalised.
  */
 define('AGENTIC_CHAT_CASE_COMPLETE_MARKER', 'Case complete.');
+
+/** Section prompt field sent as module_content (llm_prompt field, Prompt Lab versions). */
+define('AGENTIC_CHAT_FIELD_CONTEXT', 'agentic_chat_context');
+
+/* =========================================================================
+ * END OF A CONVERSATION
+ *
+ * A thread ends when the backend writes the case-complete marker or when
+ * the participant clicks End chat. Both run AgenticChatService::closeThread():
+ * the thread is completed (read-only) and the memory rules of the section
+ * field `memory_rule_ids` (sh-shp-llm LLM_MEMORY_FIELD_RULE_IDS) run on the
+ * conversation.
+ * ========================================================================= */
+
+/** Memory source type (sh-shp-llm llmMemorySourceType lookup, v1.1.0.sql): labels the update in Activity. */
+define('AGENTIC_CHAT_MEMORY_SOURCE', 'agentic_chat_end');
+define('AGENTIC_CHAT_END_REASON_CASE_COMPLETE', 'case_complete');
+define('AGENTIC_CHAT_END_REASON_USER_ENDED', 'user_ended');
 
 /* =========================================================================
  * PARTICIPANT / BACKEND SLOT MAPPING
@@ -200,9 +218,6 @@ define('TRANSACTION_BY_LLM_AGENTIC_CHAT', 'by_llm_agentic_chat');
 
 /** Maximum personas a single configuration is allowed to define. */
 define('AGENTIC_CHAT_MAX_PERSONAS', 32);
-
-/** Maximum bytes of debug events kept per thread (defensive cap). */
-define('AGENTIC_CHAT_MAX_DEBUG_EVENTS_BYTES', 256 * 1024);
 
 /* =========================================================================
  * Load lookup constants (kept in a separate file to mirror the LLM plugin
