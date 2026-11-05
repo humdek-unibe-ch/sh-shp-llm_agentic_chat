@@ -8,6 +8,9 @@ require_once __DIR__ . '/AgenticChatPersonaService.php';
 require_once __DIR__ . '/AgenticChatThreadService.php';
 require_once __DIR__ . '/AgenticChatEventNormalizer.php';
 require_once __DIR__ . '/AgenticChatTranscriptLogger.php';
+require_once __DIR__ . '/AgenticChatConfigureContextService.php';
+require_once __DIR__ . '/../../../sh-shp-llm/server/service/LlmMemoryConfigService.php';
+require_once __DIR__ . '/../../../sh-shp-llm/server/service/LlmMemoryTriggerService.php';
 
 /**
  * High-level orchestrator for agentic chat sessions.
@@ -44,6 +47,9 @@ class AgenticChatService
     /** @var AgenticChatTranscriptLogger */
     private $transcriptLogger;
 
+    /** @var AgenticChatConfigureContextService */
+    private $configureContext;
+
     /** @var array<string,string|null>|null Cached config from sh_module_llm_agentic_chat. */
     private $configCache;
 
@@ -55,12 +61,13 @@ class AgenticChatService
         $this->threadService = new AgenticChatThreadService($services);
         $this->normalizer = new AgenticChatEventNormalizer();
         $this->transcriptLogger = new AgenticChatTranscriptLogger();
+        $this->configureContext = new AgenticChatConfigureContextService($this->db);
     }
 
-    /** @return AgenticChatTranscriptLogger */
-    public function getTranscriptLogger()
+    /** @return AgenticChatConfigureContextService */
+    public function getConfigureContext()
     {
-        return $this->transcriptLogger;
+        return $this->configureContext;
     }
 
     /** @return AgenticChatEventNormalizer */
@@ -169,8 +176,9 @@ class AgenticChatService
      * the section's selection + global fallback) plus the mediator
      * toggle. The service translates that into the backend's
      * `/reflect/configure` payload (`{ thread_id, module_content,
-     * personas: [{name, description}], use_group_chat_mediator }`) and
-     * persists the participant map so attribution survives a refresh.
+     * personas: [{name, description}], use_group_chat_mediator }`),
+     * persists the participant map so attribution survives a refresh,
+     * and stores the sent body once (AgenticChatConfigureContextService).
      *
      * NB: the backend's `set_thread_config()` clears the cached
      * workflow, so callers must NOT reconfigure an active thread on
@@ -184,9 +192,11 @@ class AgenticChatService
      * @param string|null                      $moduleContent   Resolved module text (section override
      *                                          or global default). When null the global default module
      *                                          from the admin page is used.
+     * @param int|null                         $moduleSectionId Section whose `agentic_chat_context` is
+     *                                          `$moduleContent`; null for the global default module.
      * @return array{ok:bool, status:int, data?:array, error?:string}
      */
-    public function configureThread(array $thread, array $orderedPersonas, $useMediator = true, $moduleContent = null)
+    public function configureThread(array $thread, array $orderedPersonas, $useMediator = true, $moduleContent = null, $moduleSectionId = null)
     {
         $cfg = $this->getGlobalConfig();
         $module = $moduleContent !== null && trim((string) $moduleContent) !== ''
@@ -206,12 +216,24 @@ class AgenticChatService
         // threads viewer and the event normaliser.
         $participantMap = $this->personaService->buildParticipantMap($orderedPersonas);
 
-        $this->threadService->updateThread($thread['id'], [
+        $context = [];
+        try {
+            $context = $this->configureContext->record(
+                $payload,
+                (int) $thread['id_users'],
+                $moduleContent !== null && trim((string) $moduleContent) !== '' ? $moduleSectionId : null
+            );
+        } catch (Throwable $e) {
+            // storing the context must never block the configure call; the
+            // exception class only: its message can quote the module text
+            error_log('[AgenticChatService::configureThread] configure context not stored: ' . get_class($e));
+        }
+
+        $this->threadService->updateThread($thread['id'], array_merge([
             'status' => AGENTIC_CHAT_STATUS_CONFIGURING,
             'persona_slot_map' => json_encode($participantMap),
-            'module_content' => $module,
             'use_group_chat_mediator' => $useMediator ? 1 : 0,
-        ]);
+        ], $context));
 
         $result = $client->configureThread($payload, $cfg['configure_path']);
 
@@ -275,9 +297,11 @@ class AgenticChatService
      * @param array        $slotMap             Backend slot → persona key map
      *                                          (used to resolve speakers /
      *                                          interrupt source executors).
+     * @param int[]        $memoryRuleIds       Memory rules of the section, run by
+     *                                          closeThread() when this run ends the case.
      * @return array{ok:bool, status:int, error?:string}
      */
-    public function streamRun(array $thread, $userMessage, $resume, callable $onNormalisedEvent, array $slotMap = [])
+    public function streamRun(array $thread, $userMessage, $resume, callable $onNormalisedEvent, array $slotMap = [], array $memoryRuleIds = [])
     {
         $cfg = $this->getGlobalConfig();
         $client = $this->getBackendClient();
@@ -359,12 +383,22 @@ class AgenticChatService
         $sseBuffer = '';
 
         $transcriptLogger = $this->transcriptLogger;
+        // Heartbeat: the run touches the thread at least every half timeout,
+        // so End chat can tell a live run from a lost one
+        // (AgenticChatThreadService::isRunInProgress()).
+        $lastBeat = time();
+        $beatEvery = max(1, min(30, intdiv((int) $cfg['timeout'], 2)));
         $sseHandler = function (string $rawChunk) use (
             &$assistantBuffers, &$caseClosed, &$usage, &$lastError,
             &$pendingInterrupts, &$awaitingInput, &$sseBuffer, &$loggedTextHashes,
+            &$lastBeat, $beatEvery,
             $threadRef, $service, $onNormalisedEvent, $normalizer, $slotMap,
             $transcriptLogger
         ) {
+            if (time() - $lastBeat >= $beatEvery) {
+                $service->getThreadService()->touchThread($threadRef['id']);
+                $lastBeat = time();
+            }
             // Parse the chunk into complete events. parseSseChunk is
             // stateful via $sseBuffer: it returns only complete events
             // and stores any unfinished tail back into the buffer for
@@ -528,15 +562,13 @@ class AgenticChatService
             ? $lastError
             : ($result['error'] ?? $lastError);
 
+        // A closed case is completed by closeThread() below (same path as End chat).
         $finalStatus = $effectiveOk
-            ? ($caseClosed
-                ? AGENTIC_CHAT_STATUS_COMPLETED
-                : ($awaitingInput ? AGENTIC_CHAT_STATUS_AWAITING_INPUT : AGENTIC_CHAT_STATUS_IDLE))
+            ? ($awaitingInput ? AGENTIC_CHAT_STATUS_AWAITING_INPUT : AGENTIC_CHAT_STATUS_IDLE)
             : AGENTIC_CHAT_STATUS_FAILED;
 
         $this->threadService->updateThread($thread['id'], array_filter([
             'status' => $finalStatus,
-            'is_completed' => $caseClosed ? 1 : 0,
             'last_error' => $effectiveOk ? null : $effectiveError,
             'usage_input_tokens' => $usage['input'],
             'usage_output_tokens' => $usage['output'],
@@ -546,6 +578,13 @@ class AgenticChatService
             return $v !== null;
         }));
 
+        // The closing message is stored and shown even when the run errors
+        // afterwards (the chat reads the marker from the text), so the case
+        // is closed whenever the marker was streamed.
+        if ($caseClosed) {
+            $this->closeThread($thread, AGENTIC_CHAT_END_REASON_CASE_COMPLETE, $memoryRuleIds);
+        }
+
         // Surface the in-stream RUN_ERROR back to the caller too, so the
         // controller can decide whether to emit a PROXY_ERROR SSE event.
         if (!$effectiveOk && !isset($result['error'])) {
@@ -554,6 +593,142 @@ class AgenticChatService
         }
 
         return $result;
+    }
+
+    /**
+     * End a thread. Both endings run this method: the backend wrote the
+     * case-complete marker (streamRun()) or the participant clicked End chat
+     * (controller action end_thread). The thread becomes completed and
+     * read-only, and the section's memory rules run on the conversation.
+     *
+     * Only the first call for a thread does anything (the is_completed flag
+     * is claimed in one UPDATE), so a thread is closed and remembered once.
+     *
+     * @param array  $thread        Thread row.
+     * @param string $reason        AGENTIC_CHAT_END_REASON_*.
+     * @param int[]  $memoryRuleIds Rules of the section field memory_rule_ids.
+     * @return bool True when this call closed the thread.
+     */
+    public function closeThread(array $thread, $reason, array $memoryRuleIds = [])
+    {
+        $claimed = $this->db->execute_update_db(
+            'UPDATE agenticChatThreads SET is_completed = 1 WHERE id = :id AND is_completed = 0',
+            [':id' => (int) $thread['id']]
+        );
+        if ((int) $claimed !== 1) {
+            return false;
+        }
+        $this->threadService->updateThread($thread['id'], [
+            'status' => AGENTIC_CHAT_STATUS_COMPLETED,
+            'pending_interrupts' => json_encode([]),
+        ]);
+        $this->scheduleEndMemory($thread, $reason, $memoryRuleIds);
+        return true;
+    }
+
+    /**
+     * Schedule the memory rules of a closed thread (sh-shp-llm memory source
+     * `agentic_chat_end`). Runs as a scheduled job in the background, like
+     * the memory rules of an llmChat form; a failure never blocks the close.
+     *
+     * @param array  $thread
+     * @param string $reason
+     * @param int[]  $memoryRuleIds
+     * @return void
+     */
+    private function scheduleEndMemory(array $thread, $reason, array $memoryRuleIds)
+    {
+        if (empty($memoryRuleIds)) {
+            return;
+        }
+        // closeThread() also runs inside the open SSE stream: debug output of
+        // the job scheduler / database (DEBUG) must not reach the client.
+        ob_start();
+        try {
+            $config = new LlmMemoryConfigService($this->services);
+            if (!$config->isMemoryEnabled()) {
+                return;
+            }
+            $trigger = new LlmMemoryTriggerService($this->services, $config);
+            $sectionId = (int) ($thread['id_sections'] ?? 0);
+            $conversationId = (int) $thread['id_llmConversations'];
+            $transcript = $this->buildTranscript($conversationId);
+            if (!in_array('User', array_column($transcript['turns'], 'speaker'), true)) {
+                return; // the participant wrote nothing: nothing to remember
+            }
+            $payload = $trigger->normalizeSourcePayload(
+                AGENTIC_CHAT_MEMORY_SOURCE,
+                // identifies the conversation: its memory is updated once
+                [
+                    'section_id' => $sectionId,
+                    'conversation_id' => $conversationId,
+                    'thread_id' => (string) $thread['agui_thread_id'],
+                ],
+                [
+                    'section_id' => $sectionId,
+                    'conversation_id' => $conversationId,
+                    'end_reason' => (string) $reason,
+                    'transcript' => $transcript['turns'],
+                ],
+                (int) $thread['id_users'],
+                $transcript['text']
+            );
+            $trigger->scheduleRuleJob(
+                $memoryRuleIds,
+                $payload,
+                true,
+                'LLM Memory Update (agentic chat section ' . $sectionId . ')'
+            );
+        } catch (Throwable $e) {
+            // the exception class only: its message can quote the conversation
+            error_log('[AgenticChatService::closeThread] memory update not scheduled: ' . get_class($e));
+        } finally {
+            ob_end_clean();
+        }
+    }
+
+    /**
+     * The visible conversation for the memory rules: every user and
+     * assistant message in order, the assistant ones with the persona name
+     * (the kickoff token is left out).
+     *
+     * @param int $conversationId
+     * @return array{turns: array<int, array{speaker:string, text:string}>, text:string}
+     */
+    private function buildTranscript($conversationId)
+    {
+        $names = [AGENTIC_CHAT_MEDIATOR_KEY => AGENTIC_CHAT_MEDIATOR_NAME];
+        foreach ($this->getGlobalConfig()['personas'] as $persona) {
+            if (!empty($persona['key']) && !empty($persona['name'])) {
+                $names[(string) $persona['key']] = (string) $persona['name'];
+            }
+        }
+
+        $rows = $this->db->query_db(
+            "SELECT role, content, sent_context FROM llmMessages
+              WHERE id_llmConversations = :id AND deleted = 0 AND role IN ('user', 'assistant')
+           ORDER BY id ASC",
+            [':id' => (int) $conversationId]
+        ) ?: [];
+
+        $turns = [];
+        $lines = [];
+        foreach ($rows as $row) {
+            $text = trim((string) $row['content']);
+            if ($text === '' || $text === AGENTIC_CHAT_AUTO_START_TOKEN) {
+                continue;
+            }
+            $speaker = 'User';
+            if ($row['role'] === 'assistant') {
+                $context = json_decode((string) ($row['sent_context'] ?? ''), true);
+                $key = is_array($context) ? (string) ($context['authorPersonaKey'] ?? '') : '';
+                $speaker = $names[$key]
+                    ?? (is_array($context) && !empty($context['authorName']) ? (string) $context['authorName'] : 'Assistant');
+            }
+            $turns[] = ['speaker' => $speaker, 'text' => $text];
+            $lines[] = $speaker . ': ' . $text;
+        }
+        return ['turns' => $turns, 'text' => implode("\n\n", $lines)];
     }
 
     /**
