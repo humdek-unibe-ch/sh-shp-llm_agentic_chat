@@ -5,11 +5,17 @@
  *   - Read like a real chat app: a participants bar, grouped speech
  *     bubbles, avatars, names and times. The conversation grows with its
  *     content and the PAGE owns the scrollbar (no inner scroll box, so no
- *     double scrollbar and nothing pinned/sticky).
- *   - Stay easy to re-theme: every colour / radius / size is a CSS custom
- *     property declared on `.agentic-chat`. Override these (e.g. from the
- *     section's `css` field or a site stylesheet) to restyle the chat
- *     without touching the markup.
+ *     double scrollbar); only the input bar is sticky.
+ *   - Stay easy to re-theme: every colour / radius / font / size is a CSS
+ *     custom property (the theme tokens below). A theme is one class: put it
+ *     in the section's `css` field (it lands on `.agentic-chat-root`) and
+ *     re-declare the tokens for it in the global CSS, e.g.
+ *       .agentic-chat-root.my-theme { --agentic-accent: #0b5e76; }
+ *     or scope by a page wrapper: `.my-page .agentic-chat-root { ... }`.
+ *     The defaults sit in :where() (specificity 0), so any theme selector
+ *     wins without !important. Beyond the tokens, the stable `agentic-*`
+ *     classes and the state classes on `.agentic-chat`
+ *     (`agentic-chat--streaming`, `agentic-chat--closed`) are the hooks.
  *   - Lean on a small, semantic class set (BEM-ish `agentic-*`) instead of
  *     heavy bespoke CSS, so the structure is obvious and overridable.
  *   - Scale cleanly on mobile.
@@ -24,10 +30,11 @@
 
 /* Theme tokens ------------------------------------------------------------ */
 /*
- * These custom properties are the public theming surface. Re-declare any of
- * them on `.agentic-chat` (or a parent) to restyle the whole chat.
+ * These custom properties are the public theming surface. They are declared
+ * on the root with zero specificity: re-declare any of them on
+ * `.agentic-chat-root.<theme>` (or `.<wrapper> .agentic-chat-root`).
  */
-.agentic-chat {
+:where(.agentic-chat-root) {
   --agentic-accent: #2563eb;
   --agentic-accent-contrast: #ffffff;
 
@@ -44,24 +51,50 @@
   --agentic-text: #1f2937;
   --agentic-muted: #6b7280;
   --agentic-avatar-bg: #94a3b8;
+  --agentic-avatar-text: #ffffff;
   --agentic-user-avatar-bg: #475569;
+
+  --agentic-input-border: #ced4da;
+  --agentic-focus-ring: rgba(37, 99, 235, 0.15);
+  --agentic-success: #16a34a;          /* completion icon                     */
+  --agentic-handoff: #0e7490;          /* next-speaker ring and arrow         */
+  --agentic-handoff-bg: #f0fdff;
+  --agentic-warn-bg: #fffbeb;          /* interrupt prompt cards              */
+  --agentic-warn-border: #fcd34d;
+  --agentic-warn-text: #92400e;
+
+  --agentic-font: inherit;
+  --agentic-font-bold: inherit;        /* title, names                        */
+  --agentic-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
 
   --agentic-radius-lg: 0.9rem;
   --agentic-radius-md: 0.85rem;
   --agentic-radius-sm: 0.4rem;
+  --agentic-btn-radius: 0.25rem;       /* chat buttons (Bootstrap default)    */
+  --agentic-composer-radius: var(--agentic-radius-sm);
 
   --agentic-bubble-max: 78%;
   --agentic-window-min: 16rem;
+}
 
+.agentic-chat {
   display: flex;
   flex-direction: column;
   background: var(--agentic-bg);
   border: 1px solid var(--agentic-border);
   border-radius: var(--agentic-radius-lg);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  box-shadow: var(--agentic-shadow);
+  /* clip (unlike hidden) is no scroll container, so the sticky footer
+   * follows the page; browsers without clip keep hidden */
   overflow: hidden;
-  font-family: inherit;
+  overflow: clip;
+  font-family: var(--agentic-font);
   color: var(--agentic-text);
+}
+
+/* Chat buttons (header actions, completion, input toolbar) share one radius. */
+.agentic-chat .btn {
+  border-radius: var(--agentic-btn-radius);
 }
 
 /*
@@ -110,7 +143,7 @@
   height: 2.25rem;
   border-radius: 50%;
   background: var(--agentic-accent);
-  color: #fff;
+  color: var(--agentic-accent-contrast);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -119,6 +152,7 @@
 
 .agentic-chat__title {
   margin: 0;
+  font-family: var(--agentic-font-bold);
   font-size: 1.05rem;
   font-weight: 600;
   color: var(--agentic-text);
@@ -231,14 +265,14 @@
  * speaker without claiming they are already active. */
 .agentic-personas__item.is-handoff-target {
   border-style: dashed;
-  border-color: #06b6d4;
-  background: #f0fdff;
+  border-color: var(--agentic-handoff);
+  background: var(--agentic-handoff-bg);
 }
 
 .agentic-personas__handoff {
   display: inline-flex;
   align-items: center;
-  color: #0e7490;
+  color: var(--agentic-handoff);
   font-size: 0.7rem;
   animation: agentic-handoff-nudge 1s ease-in-out infinite;
 }
@@ -253,7 +287,7 @@
   height: 1.5rem;
   border-radius: 50%;
   background: var(--agentic-avatar-bg);
-  color: #fff;
+  color: var(--agentic-avatar-text);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -271,6 +305,7 @@
 }
 
 .agentic-personas__name {
+  font-family: var(--agentic-font-bold);
   font-weight: 500;
   color: var(--agentic-text);
 }
@@ -328,7 +363,7 @@
   height: 2rem;
   border-radius: 50%;
   background: var(--agentic-avatar-bg);
-  color: #fff;
+  color: var(--agentic-avatar-text);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -381,6 +416,7 @@
 }
 
 .agentic-msg__author {
+  font-family: var(--agentic-font-bold);
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--agentic-muted);
@@ -406,7 +442,7 @@
 }
 
 .agentic-msg__content pre {
-  background: #f3f4f6;
+  background: var(--agentic-surface);
   border: 1px solid var(--agentic-border);
   border-radius: 0.375rem;
   padding: 0.5rem;
@@ -434,7 +470,11 @@
   color: rgba(255, 255, 255, 0.8);
 }
 
-.agentic-msg--streaming .agentic-msg__body::after {
+/* Caret at the end of the text that is streaming in (inside the last list
+ * item when the text ends with a list). */
+.agentic-msg--streaming .agentic-msg__content > :last-child:not(ul):not(ol)::after,
+.agentic-msg--streaming .agentic-msg__content > ul:last-child > li:last-child::after,
+.agentic-msg--streaming .agentic-msg__content > ol:last-child > li:last-child::after {
   content: '';
   display: inline-block;
   width: 0.4rem;
@@ -447,6 +487,18 @@
 
 @keyframes agentic-blink {
   to { visibility: hidden; }
+}
+
+/* Entrance of a bubble that is streaming in or was just sent. */
+.agentic-msg--streaming,
+.agentic-msg--new,
+.agentic-typing {
+  animation: agentic-msg-in 0.2s ease-out both;
+}
+
+@keyframes agentic-msg-in {
+  from { opacity: 0; transform: translateY(0.35rem); }
+  to   { opacity: 1; transform: none; }
 }
 
 /* Typing indicator -------------------------------------------------------- */
@@ -463,12 +515,20 @@
   height: 2rem;
   border-radius: 50%;
   background: var(--agentic-avatar-bg);
-  color: #ffffff;
+  color: var(--agentic-avatar-text);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 0.8rem;
+  font-weight: 600;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.agentic-typing__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .agentic-typing__bubble {
@@ -502,10 +562,34 @@
 
 /* Footer / input bar ------------------------------------------------------ */
 
+/* Sticky: the input stays at the bottom of the screen while the chat is in
+ * view, so a long conversation never has to be scrolled to reply. */
 .agentic-chat__footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   padding: 0.75rem 1rem;
   background: var(--agentic-bg);
   border-top: 1px solid var(--agentic-border);
+}
+
+/* "New messages" button floating just above the input bar. */
+.agentic-chat__jump {
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  left: 50%;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: var(--agentic-accent);
+  color: var(--agentic-accent-contrast);
+  box-shadow: 0 2px 6px rgba(16, 24, 40, 0.18);
+  white-space: nowrap;
+}
+
+.agentic-chat__jump:hover,
+.agentic-chat__jump:focus {
+  color: var(--agentic-accent-contrast);
+  filter: brightness(0.95);
 }
 
 /* Live run-status line sitting directly above the input, so "X is
@@ -529,8 +613,8 @@
 }
 
 .agentic-input__shell {
-  border: 1px solid #ced4da;
-  border-radius: var(--agentic-radius-sm);
+  border: 1px solid var(--agentic-input-border);
+  border-radius: var(--agentic-composer-radius);
   background: var(--agentic-bg);
   overflow: hidden;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
@@ -538,7 +622,7 @@
 
 .agentic-input__shell:focus-within {
   border-color: var(--agentic-accent);
-  box-shadow: 0 0 0 0.18rem rgba(37, 99, 235, 0.15);
+  box-shadow: 0 0 0 0.18rem var(--agentic-focus-ring);
 }
 
 .agentic-input__textarea {
@@ -639,7 +723,7 @@
 }
 
 .agentic-chat__completion-icon {
-  color: #16a34a;
+  color: var(--agentic-success);
   flex: 0 0 auto;
 }
 
@@ -654,14 +738,14 @@
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.75rem 1rem 1rem;
-  background: linear-gradient(180deg, #fffbeb 0%, #fffdf5 100%);
-  border-top: 1px solid #fde68a;
+  background: var(--agentic-warn-bg);
+  border-top: 1px solid var(--agentic-warn-border);
 }
 
 .agentic-interrupt-card {
-  border: 1px solid #fcd34d;
+  border: 1px solid var(--agentic-warn-border);
   border-radius: var(--agentic-radius-sm);
-  background: #fffbeb;
+  background: var(--agentic-warn-bg);
   padding: 0.75rem 1rem;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
@@ -680,8 +764,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background-color: #f59e0b;
-  color: #fff;
+  background-color: var(--agentic-warn-text);
+  color: var(--agentic-avatar-text);
   font-weight: 600;
   overflow: hidden;
   flex-shrink: 0;
@@ -700,23 +784,24 @@
 }
 
 .agentic-interrupt-card__author {
+  font-family: var(--agentic-font-bold);
   font-weight: 600;
-  color: #92400e;
+  color: var(--agentic-warn-text);
 }
 
 .agentic-interrupt-card__reason {
   font-size: 0.8rem;
-  color: #b45309;
+  color: var(--agentic-warn-text);
   text-transform: capitalize;
 }
 
 .agentic-interrupt-card__counter {
-  color: #d97706;
+  color: var(--agentic-warn-text);
   text-transform: none;
 }
 
 .agentic-interrupt-card__body {
-  color: #422006;
+  color: var(--agentic-text);
   font-size: 0.925rem;
   line-height: 1.4;
 }
@@ -767,11 +852,26 @@
   word-break: break-word;
 }
 
+/* Reduced motion ---------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .agentic-chat *,
+  .agentic-chat *::before,
+  .agentic-chat *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Responsive -------------------------------------------------------------- */
 
 @media (max-width: 576px) {
-  .agentic-chat {
+  :where(.agentic-chat-root) {
     --agentic-bubble-max: 88%;
+  }
+
+  .agentic-chat {
     border-radius: 0.6rem;
   }
 
