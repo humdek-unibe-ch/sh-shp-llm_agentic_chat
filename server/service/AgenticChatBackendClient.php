@@ -94,9 +94,14 @@ class AgenticChatBackendClient
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, false);
         curl_setopt($ch, CURLOPT_HEADER, false);
-        // No connection timeout cap on the body; only on initial connect.
+        // No cap on the whole body (long replies keep streaming), but the
+        // backend must send something at least every `timeout` seconds: a
+        // hung backend ends the run instead of holding the request forever
+        // (AgenticChatThreadService::isRunInProgress() relies on this).
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $this->timeout);
         curl_setopt($ch, CURLOPT_TIMEOUT, 0);
+        curl_setopt($ch, CURLOPT_LOW_SPEED_LIMIT, 1);
+        curl_setopt($ch, CURLOPT_LOW_SPEED_TIME, $this->timeout);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
         curl_setopt($ch, CURLOPT_BUFFERSIZE, 256);
         curl_setopt($ch, CURLOPT_WRITEFUNCTION, function ($ch, $chunk) use ($onChunk) {
@@ -110,11 +115,19 @@ class AgenticChatBackendClient
 
         curl_exec($ch);
         $error = curl_error($ch);
+        $errno = curl_errno($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
         if ($error !== '' && $status === 0) {
             return ['ok' => false, 'status' => 0, 'error' => $error];
+        }
+        if ($errno === CURLE_OPERATION_TIMEDOUT) {
+            return [
+                'ok' => false,
+                'status' => $status,
+                'error' => "Backend sent no data for {$this->timeout} seconds",
+            ];
         }
         if ($status >= 400) {
             return [
