@@ -4,6 +4,98 @@ All notable changes to the **sh-shp-llm_agentic_chat** plugin are documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] (work in progress)
+
+**Memory when a conversation ends, an End chat button, and the configure
+context stored once.**
+
+### Upgrade notes
+- Requires **sh-shp-llm v1.8.0**. Run `server/db/v1.1.0.sql` after the
+  sh-shp-llm `v1.8.0.sql`, then clear the SelfHelp cache
+  (**Admin > Cache > Clear all**). The migration can be run again safely.
+- `agentic_chat_context` is now sent to the backend **as written**. Before,
+  it was a markdown field and the backend got HTML converted from it.
+
+### Added
+- **Memory on conversation end.** When a thread ends, the memory rules
+  selected in the section field `memory_rule_ids` (the sh-shp-llm field of
+  every style) run in the
+  background (scheduled job, memory source **Agentic chat end**) with the
+  whole conversation: `transcript` (speaker and text per turn) and
+  `end_reason` (`case_complete` / `user_ended`). A thread updates memory
+  once; starting a new thread does not run memory.
+- **End chat button** (`agentic_chat_show_end_chat_button`, default off;
+  label `agentic_chat_end_chat_label`, question
+  `agentic_chat_end_chat_confirm`). Shown once the participant has replied;
+  after a confirmation it closes the thread exactly like a backend
+  `Case complete.`: read-only, completion notice, memory rules.
+- **Chat UI:** the input bar stays at the bottom of the screen while the
+  chat is in view; a **New messages** button appears when a reply streams
+  in below the fold; the typing indicator shows the avatar of the persona
+  about to speak; streamed text renders once per frame with a caret at its
+  end, and new bubbles fade in (no animation under *reduced motion*).
+
+### Changed
+- `agentic_chat_context` is an LLM prompt field like the llmChat
+  `conversation_context`: Prompt Lab editor, and every CMS save is a
+  Prompt Lab version. Each thread links the version it was started with.
+- **Configure context stored once** (sh-shp-llm request-trace pattern):
+  instead of the full module text on every thread, a thread references the
+  Prompt Lab version or a chunk in `llmTraceChunks` (shared for the
+  default module, the persona list and long Global Values, per user when
+  placeholders were replaced: the module is cut like an sh-shp-llm request
+  trace) and stores `configure_hash`. The persona descriptions that were
+  sent are now kept too, so the admin Threads viewer shows the exact
+  configure body (threads from before v1.1.0: module only).
+- The section persona picker uses the core `select`, like the memory-rule
+  picker of sh-shp-llm.
+- **Theming.** The `--agentic-*` tokens are declared in
+  `:where(.agentic-chat-root)`, so a theme class on the section overrides
+  them without `!important` (before, they sat on `.agentic-chat` and could
+  not be overridden from the section or a page wrapper). New tokens for the
+  hard-coded colours and fonts (input border, focus ring, success, handoff,
+  interrupt cards, `--agentic-font` / `--agentic-font-bold`, shadow, button
+  and composer radius). New hooks: `agentic-chat--streaming` /
+  `agentic-chat--closed` on `.agentic-chat`, and
+  `agentic-actions__btn--start` / `--reset` / `--end`. See README > Theming.
+
+### Fixed
+- The section's `css` classes are now printed on the chat root
+  (`.agentic-chat-root`), like on every SelfHelp style. The field existed
+  since v1.0.0 but had no effect on the web page.
+- The participant's browser no longer receives the module text
+  (`moduleContent` in the chat config and thread data).
+- Creating a thread now writes its audit entry (`transactions`, by
+  `by_llm_agentic_chat`, the new thread row). It failed with a database
+  error before, because the arguments were passed in the wrong order.
+- "Start a new thread" after a finished conversation no longer shows the
+  new thread as finished (the chat stayed locked without an input box).
+- Chat labels with an apostrophe, quote, `&`, `<` or `>` show the text as
+  written instead of HTML entities (e.g. `&#039;`).
+- **A hung or lost run no longer blocks the thread.** The backend timeout
+  (`agentic_chat_timeout`, default 120 s) now also ends a `/reflect` stream
+  that stays silent that long (a reply that keeps streaming is not cut off;
+  before, a hung backend held the request forever). A thread still
+  `running` after twice the timeout without activity (e.g. after a PHP
+  crash) can be ended with End chat; before, End chat refused it.
+- **A message to a finished conversation no longer opens a broken thread.**
+  Sending from a tab that was still open after the conversation ended (End
+  chat or `Case complete.` in another tab) created a new thread without
+  personas and module, so every reply failed and the finished conversation
+  was hidden. The chat now answers "This conversation has ended" and shows
+  the finished conversation again; a new thread starts only with "Start a
+  new thread" (`stream_run` answers 409 when there is no active thread).
+- A request without message text no longer starts a backend run
+  (`stream_run` answers 400; the chat already blocked blank input).
+
+### Migration
+- `server/db/v1.1.0.sql`: registers the memory source lookup and the new
+  fields, changes `agentic_chat_context` to `llm_prompt`, adds
+  `configure_recipe_json` / `configure_hash` /
+  `id_llm_prompt_versions_module` to `agenticChatThreads`, moves the
+  existing `module_content` texts into per-user `llmTraceChunks` and drops
+  that column. Clear the cache afterwards.
+
 ## [1.0.1] - 2026-06-09
 
 ### Fixed
