@@ -12,7 +12,8 @@ configurable AG-UI workflow server.
 
 > **Plugin name:** `sh-shp-llm_agentic_chat`
 > **Plugin DB key:** `llm_agentic_chat`
-> **Depends on:** `sh-shp-llm`
+> **Depends on:** `sh-shp-llm` **v1.8.0** or newer (memory, Prompt Lab,
+> `llmTraceChunks`)
 
 ---
 
@@ -44,14 +45,18 @@ configurable AG-UI workflow server.
   - Filters: free-text search, status, user id, section id
   - Paginated table with status badges, message count, token usage
   - Detail pane with three tabs: Messages, Debug (participant map ·
-    interrupts · debug events), and Raw (full thread JSON)
+    interrupts), and Raw (full thread JSON)
   - Per-thread last error surfaced prominently for development triage
 - **CMS style `agenticChat`** for the page editor:
   - Standard style fields: `css`, `css_mobile`, `condition`, `debug`, and
     `data_config`.
-  - Per-section module/reflection override, an **ordered persona
+  - Per-section module/reflection override (`agentic_chat_context`, an
+    LLM prompt field like the llmChat `conversation_context`: sent as
+    written, every CMS save is a Prompt Lab version), an **ordered persona
     selection** (subset of the global library), a **`use_group_chat_mediator`
     toggle** (default on), labels, and completion message.
+  - Optional **End chat** button and **memory** rules that run when a
+    conversation ends (see [Ending a conversation](#ending-a-conversation)).
 - **AG-UI streaming proxy:** the controller bridges the front-end and the
   backend SSE stream, persists visible user/assistant text in
   `llmMessages`, and stores AG-UI metadata (thread id, run ids, tool-call
@@ -211,12 +216,49 @@ kickoff/start  →  POST /reflect  (synthetic __auto_start__ token sent once)
 stream       →   POST /reflect (SSE), camelCase threadId/runId per turn
 interrupt    →   RUN_FINISHED.outcome = { type: "interrupt", … }
 resume       →   POST /reflect with strict ResumeEntry[] → legacy body
-completion   →   "Case complete." marker closes the thread in UI
+completion   →   "Case complete." marker or End chat closes the thread (memory runs)
 reset        →   user starts a new local thread + new backend thread_id
 ```
 
 See [`doc/agentic-chat-flow.md`](doc/agentic-chat-flow.md) for the full
 end-to-end flow.
+
+### Ending a conversation
+
+A thread ends in one of two ways, and both run the same
+`AgenticChatService::closeThread()`:
+
+- the backend closes the case: an assistant message (the mediator, or a
+  persona without mediator) ends with `Case complete.`;
+- the participant clicks **End chat** (`agentic_chat_show_end_chat_button`,
+  default off; shown once the participant has replied, after a
+  confirmation). The backend has no end-thread endpoint, so the thread is
+  closed in SelfHelp only.
+
+The thread becomes read-only (`completed`), and the memory rules selected
+in the section field `memory_rule_ids` (the same field as on forms) run in the background as
+a scheduled job (memory source **Agentic chat end**, see the sh-shp-llm
+[global memory guide](../sh-shp-llm/doc/global-memory-user-guide.md)). The
+rule gets the whole conversation as Submitted Data (`transcript`: speaker
+and text per turn, plus `end_reason` `case_complete` / `user_ended`) and as
+`{{readable_text}}`. A thread is closed and remembered once. Starting a new
+thread does not run memory. Memory must be enabled in the LLM settings.
+
+The transcript is not shortened: a long conversation is sent to the memory
+rule in full. Pick a rule model whose context window fits the longest
+conversations of the study (with the rule prompt and the current memory);
+otherwise the memory update fails and is listed as failed in Scheduled Jobs.
+
+### What is stored per thread
+
+The `/reflect/configure` body is stored once, like the request traces of
+sh-shp-llm: the module text is the Prompt Lab version of
+`agentic_chat_context` (or chunks in `llmTraceChunks` when placeholders
+were replaced or the global default module was sent; long Global Values in
+it are shared chunks, as in sh-shp-llm request traces), the persona list is
+a shared chunk, and `configure_hash` is the sha256 of the sent body. The
+admin Threads viewer shows that exact body; threads from before v1.1.0
+only kept their module text.
 
 ## Backend assumptions
 
@@ -353,9 +395,11 @@ sh-shp-llm_agentic_chat/
 │   │   ├── AgenticChatEventNormalizer.php Legacy↔strict AG-UI normalisation bridge
 │   │   ├── AgenticChatPersonaService.php  Persona CRUD + JSON validation
 │   │   ├── AgenticChatThreadService.php   agenticChatThreads CRUD + message persistence
-│   │   └── AgenticChatService.php         Orchestrates configure / start_thread / stream_run
+│   │   ├── AgenticChatConfigureContextService.php  Stores / rebuilds the configure body
+│   │   └── AgenticChatService.php         Orchestrates configure / stream_run / closeThread
 │   ├── constants/AgenticChatLookups.php
-│   └── db/v1.0.0.sql                      Migration: page, fields, style, table, hooks
+│   ├── db/v1.0.0.sql                      Migration: page, fields, style, table, hooks
+│   └── db/v1.1.0.sql                      Memory source, End chat, prompt field, configure context
 ├── react/
 │   ├── src/AgenticChat.tsx                 Front-end entry (mounts on .agentic-chat-root)
 │   ├── src/AgenticAdmin.tsx                Admin config entry (mounts on #agentic-admin-root)
@@ -371,6 +415,34 @@ sh-shp-llm_agentic_chat/
 ├── css/ext/                               Built CSS
 └── doc/                                   Architecture and integration notes
 ```
+
+## Theming
+
+The chat is themed with CSS custom properties (the `--agentic-*` tokens at
+the top of `react/src/components/chat/AgenticChat.css`: colours, bubbles,
+fonts, radii, shadow, input, interrupt cards). The defaults sit in
+`:where(.agentic-chat-root)` (specificity 0), so a theme overrides them
+without `!important`:
+
+1. Put a theme class in the section's `css` field (CMS). It lands on the
+   chat root: `<div class="agentic-chat-root my-theme ...">`.
+2. In the global CSS (page `sh_global_css`), re-declare the tokens for it:
+   ```css
+   .agentic-chat-root.my-theme {
+       --agentic-accent: #0b5e76;
+       --agentic-scroller-bg: #e4ebed;
+       --agentic-font: "Helvetica Light", Arial, sans-serif;
+   }
+   ```
+3. For more than colours, style the stable hooks under the theme class:
+   `agentic-chat__header`, `agentic-chat__title`, `agentic-personas__item`,
+   `agentic-msg--assistant` / `--user`, `agentic-msg__body`,
+   `agentic-input__shell`, `agentic-actions__btn--start` / `--reset` / `--end`,
+   `agentic-status--<state>`, and the state classes on `.agentic-chat`:
+   `agentic-chat--streaming` (a reply is streaming) and
+   `agentic-chat--closed` (the conversation ended).
+
+A section without a theme class keeps the default look.
 
 ## Build
 
