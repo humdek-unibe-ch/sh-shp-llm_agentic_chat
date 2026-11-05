@@ -6,15 +6,17 @@
  * (brand + title + primary actions), a body (participant strip + message
  * list) that grows with the conversation, and a footer holding the live
  * run-status line and the input bar (or, once the case is complete, a
- * read-only completion notice). Nothing is position-sticky — the page
- * itself owns the scrollbar.
+ * read-only completion notice). The page owns the scrollbar; the footer
+ * is sticky, so the input stays at the bottom of the screen while the
+ * chat is in view. A "New messages" button appears in it when a reply
+ * streams in below the fold.
  *
  * The shell is purely visual; data, hooks and side-effects live in
  * `AgenticChatApp`.
  *
  * @module components/chat/ChatShell
  */
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -122,6 +124,8 @@ export interface ChatShellProps {
   errorMessage: string | null;
   showStart: boolean;
   showReset: boolean;
+  /** Show the End chat button (section flag + participant has replied + open thread). */
+  showEnd: boolean;
   showPersonaStrip: boolean;
   showRunStatus: boolean;
   showDebug: boolean;
@@ -139,6 +143,7 @@ export interface ChatShellProps {
   onSend: (text: string) => void;
   onStart: () => void;
   onReset: () => void;
+  onEnd: () => void;
 }
 
 export const ChatShell: React.FC<ChatShellProps> = ({
@@ -155,6 +160,7 @@ export const ChatShell: React.FC<ChatShellProps> = ({
   errorMessage,
   showStart,
   showReset,
+  showEnd,
   showPersonaStrip,
   showRunStatus,
   showDebug,
@@ -168,9 +174,12 @@ export const ChatShell: React.FC<ChatShellProps> = ({
   onSend,
   onStart,
   onReset,
+  onEnd,
 }) => {
   const inputDisabled = isStreaming || caseClosed || status === 'starting';
   const personasByKey = useMemo(() => indexPersonas(personas), [personas]);
+  const endRef = useRef<HTMLDivElement>(null);
+  const [hasUnseen, setHasUnseen] = useState(false);
 
   // The live run status ("Anja is typing…", "Configuring…", "Handing off
   // to X") now sits just above the input — close to where the user is
@@ -203,7 +212,14 @@ export const ChatShell: React.FC<ChatShellProps> = ({
   }, [messages]);
 
   return (
-    <section className="agentic-chat">
+    <section
+      className={[
+        'agentic-chat',
+        // state hooks for themes
+        isStreaming ? 'agentic-chat--streaming' : '',
+        caseClosed ? 'agentic-chat--closed' : '',
+      ].filter(Boolean).join(' ')}
+    >
       <header className="agentic-chat__header">
         <div className="agentic-chat__title-row">
           <div className="agentic-chat__brand">
@@ -222,15 +238,18 @@ export const ChatShell: React.FC<ChatShellProps> = ({
             </ReactMarkdown>
           </div>
         )}
-        {(showStart || (showReset && !caseClosed)) && (
+        {(showStart || (showReset && !caseClosed) || showEnd) && (
           <ThreadActions
             startLabel={labels.startLabel}
             resetLabel={labels.resetLabel}
+            endLabel={labels.endChatLabel}
             showStart={showStart}
             showReset={showReset && !caseClosed}
+            showEnd={showEnd}
             disabled={isStreaming}
             onStart={onStart}
             onReset={onReset}
+            onEnd={onEnd}
           />
         )}
       </header>
@@ -252,6 +271,9 @@ export const ChatShell: React.FC<ChatShellProps> = ({
           slotMap={slotMap}
           autoStartToken={autoStartToken}
           isStreaming={isStreaming}
+          typingPersona={handoffPersona ?? activeSpeaker}
+          endRef={endRef}
+          onUnseenChange={setHasUnseen}
         />
         {status === 'awaiting_input' && pendingInterrupts.length > 0 && (
           <div className="agentic-chat__interrupts">
@@ -284,6 +306,18 @@ export const ChatShell: React.FC<ChatShellProps> = ({
       )}
 
       <div className="agentic-chat__footer">
+        {hasUnseen && (
+          <button
+            type="button"
+            className="btn btn-sm agentic-chat__jump"
+            onClick={() => endRef.current?.scrollIntoView({
+              behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+              block: 'end',
+            })}
+          >
+            <i className="fas fa-arrow-down mr-1" aria-hidden="true" /> New messages
+          </button>
+        )}
         {caseClosed ? (
           <div className="agentic-chat__completion" role="status">
             <div className="agentic-chat__completion-text">
@@ -334,6 +368,7 @@ export const ChatShell: React.FC<ChatShellProps> = ({
           </>
         )}
       </div>
+      <div ref={endRef} className="agentic-chat__bottom" aria-hidden="true" />
 
       {showDebug && <DebugEventPanel events={events} />}
     </section>

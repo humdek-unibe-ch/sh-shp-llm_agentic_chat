@@ -10,8 +10,12 @@
  * (`authorName`, `sourceExecutorId`, `authorPersonaKey`, …) so the
  * renderer can resolve avatars/names from the message itself rather
  * than from transient global handoff state.
+ *
+ * Streamed deltas are rendered at most once per animation frame: a reply
+ * arrives token by token, and re-rendering (and re-parsing the markdown)
+ * for every token made long replies stutter. START / END render at once.
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AgUiEvent,
   AssistantSpeakerMetadata,
@@ -85,9 +89,27 @@ export function useMessages(): UseMessagesResult {
   const [handoffTarget, setHandoffTarget] = useState<string | null>(null);
 
   const buffersRef = useRef<Record<string, InFlightMessage>>({});
+  const frameRef = useRef<number | null>(null);
 
   const commitInFlight = useCallback(() => {
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
     setInFlight(Object.values(buffersRef.current));
+  }, []);
+
+  /** Render the buffered deltas with the next animation frame. */
+  const scheduleCommit = useCallback(() => {
+    if (frameRef.current !== null) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      setInFlight(Object.values(buffersRef.current));
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
   }, []);
 
   const setInitialMessages = useCallback((next: ChatMessage[]) => {
@@ -173,7 +195,7 @@ export function useMessages(): UseMessagesResult {
         // name the executor on the first CONTENT event.
         const next: InFlightMessage = { ...buf, ...mergeSpeaker(buf, speaker), text: buf.text + delta };
         buffersRef.current[messageId] = next;
-        commitInFlight();
+        scheduleCommit();
         return;
       }
 
@@ -226,7 +248,7 @@ export function useMessages(): UseMessagesResult {
           ...mergeSpeaker(buf, speaker),
           text: buf.text + delta,
         };
-        commitInFlight();
+        scheduleCommit();
         return;
       }
 
@@ -260,7 +282,7 @@ export function useMessages(): UseMessagesResult {
       default:
         return;
     }
-  }, [commitInFlight, currentPersonaKey]);
+  }, [commitInFlight, scheduleCommit, currentPersonaKey]);
 
   return {
     messages,

@@ -92,7 +92,9 @@ export function useAgUiStream({
     if (!resp.ok || !resp.body) {
       setIsStreaming(false);
       controllerRef.current = null;
-      onError?.(`HTTP ${resp.status}`);
+      // the controller answers refusals as JSON { error } (e.g. 409 for a closed thread)
+      const body = await resp.json().catch(() => null) as { error?: string } | null;
+      onError?.(body?.error || `HTTP ${resp.status}`);
       onComplete?.();
       return;
     }

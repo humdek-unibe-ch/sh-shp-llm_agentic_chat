@@ -41,6 +41,8 @@ export interface MessageBubbleProps {
   showName?: boolean;
   /** Tighten the top spacing because this bubble continues a group. */
   grouped?: boolean;
+  /** Just sent by the user (not yet reloaded from the server): fades in. */
+  isNew?: boolean;
 }
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({
@@ -53,6 +55,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   showAvatar = true,
   showName = true,
   grouped = false,
+  isNew = false,
 }) => {
   const isUser = role === 'user';
   const wrapperClass = [
@@ -60,6 +63,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
     `agentic-msg--${role}`,
     isStreaming ? 'agentic-msg--streaming' : '',
     grouped ? 'agentic-msg--grouped' : '',
+    isNew ? 'agentic-msg--new' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -115,10 +119,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         <div className="agentic-msg__content">
           {isUser ? (
             content
+          ) : content ? (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
           ) : (
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {content || (isStreaming ? '…' : '')}
-            </ReactMarkdown>
+            // the caret (CSS) stands in until the first token arrives
+            isStreaming && <p />
           )}
         </div>
         {timestamp && <div className="agentic-msg__timestamp">{timestamp}</div>}

@@ -4,13 +4,16 @@
  *
  * Scrolling:
  *   - There is NO inner scroll box. The conversation grows with its
- *     content and the PAGE owns the scrollbar (no double scrollbar, no
- *     sticky content). A zero-height sentinel at the end of the transcript
- *     is the scroll target.
+ *     content and the PAGE owns the scrollbar (no double scrollbar). The
+ *     scroll target is a zero-height sentinel after the chat footer
+ *     (`endRef`, owned by ChatShell), so following a run never hides the
+ *     last line under the sticky input bar.
  *   - We only auto-follow once a live run has happened this session (so a
  *     plain reload never hijacks the page position) and only when the
  *     reader is already near the bottom, so scrolling up to re-read
- *     history is not yanked back down while new tokens stream in.
+ *     history is not yanked back down while new tokens stream in. New
+ *     content below the fold is reported through `onUnseenChange` (the
+ *     "New messages" button).
  *
  * Grouping:
  *   - Consecutive messages from the SAME speaker are visually grouped: the
@@ -21,7 +24,8 @@
  * Typing indicator:
  *   - When the SSE connection is open but no assistant text has streamed
  *     yet, three pulsing dots stand in for the upcoming bubble so the UI
- *     never looks frozen during the agent's "thinking" window.
+ *     never looks frozen during the agent's "thinking" window. They carry
+ *     the avatar of the persona about to speak (`typingPersona`).
  */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import type {
@@ -32,6 +36,7 @@ import type {
   PersonaSlotMap,
 } from '../../types';
 import { findPersonaByAuthor, indexPersonas } from '../../utils/persona-mapping';
+import { isImageAvatar, resolveAvatarUrl } from '../../utils/avatar';
 import { MessageBubble } from './MessageBubble';
 
 export interface MessageListProps {
@@ -42,6 +47,12 @@ export interface MessageListProps {
   autoStartToken: string;
   /** True while the SSE connection is open. Drives the typing indicator. */
   isStreaming?: boolean;
+  /** Persona about to speak, shown on the typing indicator. */
+  typingPersona?: Persona | null;
+  /** Scroll target at the end of the chat (after the footer). */
+  endRef: React.RefObject<HTMLDivElement>;
+  /** Called when new content is (true) / is no longer (false) out of view. */
+  onUnseenChange?: (unseen: boolean) => void;
 }
 
 /** Distance (px) from the bottom within which we keep auto-scrolling. */
@@ -55,6 +66,7 @@ interface RenderRow {
   authorName?: string;
   timestamp?: string;
   isStreaming?: boolean;
+  isNew?: boolean;
   /** Identity of the speaker, used to group consecutive bubbles. */
   speakerId: string;
 }
@@ -78,10 +90,18 @@ export const MessageList: React.FC<MessageListProps> = ({
   slotMap,
   autoStartToken,
   isStreaming = false,
+  typingPersona = null,
+  endRef,
+  onUnseenChange,
 }) => {
-  const bottomRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const streamingSeenRef = useRef(false);
+  const unseenRef = useRef(false);
+  const setUnseen = useCallback((unseen: boolean) => {
+    if (unseenRef.current === unseen) return;
+    unseenRef.current = unseen;
+    onUnseenChange?.(unseen);
+  }, [onUnseenChange]);
   const personasByKey = useMemo(() => indexPersonas(personas), [personas]);
 
   // Remember once a live run has happened this session; only then do we
@@ -136,6 +156,9 @@ export const MessageList: React.FC<MessageListProps> = ({
         authorName: ctx?.authorName,
         timestamp: formatTimestamp(msg.created_at),
         speakerId: speakerIdOf(msg.role, persona, ctx?.authorName, ctx?.sourceExecutorId),
+        // optimistic ids are negative; the server copy replaces the bubble
+        // (new key) without the entrance animation
+        isNew: msg.role === 'user' && msg.id < 0,
       });
     }
 
@@ -164,12 +187,16 @@ export const MessageList: React.FC<MessageListProps> = ({
   // Track whether the PAGE is scrolled near the bottom of the
   // conversation. The chat has no inner scrollbar any more, so we measure
   // the bottom sentinel against the viewport instead of an inner element.
+  const isNearEnd = useCallback(() => {
+    const el = endRef.current;
+    if (!el) return true;
+    return el.getBoundingClientRect().top - window.innerHeight < STICK_THRESHOLD_PX;
+  }, [endRef]);
+
   useEffect(() => {
     const onScroll = () => {
-      const el = bottomRef.current;
-      if (!el) return;
-      const distance = el.getBoundingClientRect().top - window.innerHeight;
-      stickToBottomRef.current = distance < STICK_THRESHOLD_PX;
+      stickToBottomRef.current = isNearEnd();
+      if (stickToBottomRef.current) setUnseen(false);
     };
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
@@ -178,18 +205,25 @@ export const MessageList: React.FC<MessageListProps> = ({
       window.removeEventListener('scroll', onScroll);
       window.removeEventListener('resize', onScroll);
     };
-  }, []);
+  }, [isNearEnd, setUnseen]);
 
   // Follow new content by nudging the PAGE (not an inner box) to the
-  // bottom sentinel — but only during/after a live run, and only when the
+  // end sentinel — but only during/after a live run, and only when the
   // reader is already near the bottom, so re-reading history is never
-  // yanked. Runs before paint to avoid a visible jump.
+  // yanked (new content is reported as unseen instead). Runs before paint
+  // to avoid a visible jump.
   useLayoutEffect(() => {
     if (!streamingSeenRef.current) return;
     if (stickToBottomRef.current) {
-      bottomRef.current?.scrollIntoView({ block: 'end' });
+      endRef.current?.scrollIntoView({ block: 'end' });
+    } else if (isNearEnd()) {
+      // the end is in view after all (e.g. a new thread cleared the chat)
+      stickToBottomRef.current = true;
+      setUnseen(false);
+    } else {
+      setUnseen(true);
     }
-  }, [rows.length, inflightSignature, showTypingIndicator]);
+  }, [rows.length, inflightSignature, showTypingIndicator, endRef, isNearEnd, setUnseen]);
 
   return (
     <div className="agentic-chat__scroller" role="log" aria-live="polite">
@@ -205,6 +239,7 @@ export const MessageList: React.FC<MessageListProps> = ({
             authorName={row.authorName}
             timestamp={row.timestamp}
             isStreaming={row.isStreaming}
+            isNew={row.isNew}
             showAvatar={isFirstOfGroup}
             showName={isFirstOfGroup}
             grouped={!isFirstOfGroup}
@@ -214,19 +249,29 @@ export const MessageList: React.FC<MessageListProps> = ({
 
       {showTypingIndicator && (
         <div className="agentic-typing" role="status" aria-live="polite">
-          <div className="agentic-typing__avatar" aria-hidden="true">
-            <i className="fas fa-robot" />
+          <div
+            className="agentic-typing__avatar"
+            style={typingPersona?.color ? { backgroundColor: typingPersona.color } : undefined}
+            aria-hidden="true"
+          >
+            {typingPersona && isImageAvatar(typingPersona.avatar) ? (
+              <img src={resolveAvatarUrl(typingPersona.avatar)} alt="" />
+            ) : typingPersona?.name ? (
+              typingPersona.name.charAt(0).toUpperCase()
+            ) : (
+              <i className="fas fa-robot" />
+            )}
           </div>
           <div className="agentic-typing__bubble">
             <span className="agentic-typing__dot" />
             <span className="agentic-typing__dot" />
             <span className="agentic-typing__dot" />
-            <span className="sr-only">Responding…</span>
+            <span className="sr-only">
+              {typingPersona?.name ? `${typingPersona.name} is typing…` : 'Responding…'}
+            </span>
           </div>
         </div>
       )}
-
-      <div ref={bottomRef} className="agentic-chat__bottom" aria-hidden="true" />
     </div>
   );
 };
